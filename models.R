@@ -10,10 +10,8 @@ library(readr)
 library(ggplot2)
 library(mice)
 library(mgcv)
-library(splines)
 library(dplyr)
-library(lme4)
-library(brms)
+
 
 setwd("Z:/fit_nonreturn_paper_20250417")
 
