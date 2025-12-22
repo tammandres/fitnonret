@@ -1,0 +1,5 @@
+install.packages('readr', version="2.1.5")
+install.packages('ggplot2', version="3.5.2")
+install.packages('mice', version="3.18.0")
+install.packages('mgcv', version="1.9-3")
+install.packages('dplyr', version="1.1.4")
