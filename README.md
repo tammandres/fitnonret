@@ -2,6 +2,8 @@
 
 This code accompanies the manuscript "Should patient characteristics or the time from test request trigger reminders to return Faecal Immunochemical Tests in primary care?", authored by Andres Tamm, Madison Luick, Carmen Fierro Martinez, Brian Shine, Tim James, James E. East, Catia Nicodemo, Stavros Petrou, and Brian D. Nicholson.
 
+Andres Tamm
+
 2025-12-22
 
 ## Installation
