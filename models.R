@@ -20,6 +20,7 @@ dir.create(file.path(out_path), showWarnings = FALSE)
 
 run_on_imputed_data <- FALSE
 
+
 # ---- 1. Read and prepare data ----
 
 # Read data
@@ -67,6 +68,9 @@ sum(is.na(df$nonret2_days70))
 sum(is.na(df$nonret2_days14))
 
 # Drop patients who died before 70-day follow-up without returning a test (116)
+#  This is necessary, because the censoring indicator that was created in dataprep.py
+#  only considers time passed from FIT request to datacut date, not deaths occurring in between.
+#  Ideally, the censoring indicator could have been updated to account for deaths.
 mask <- (df$censored == 1) & (!is.na(df$days_to_death)) & (df$days_to_death <= 70)
 sum(mask)
 nrow(df)
@@ -88,6 +92,7 @@ mean(df_test$nonret2_days70)  ## 14.8%
 sum(df_train$nonret2_days70) ## 7304
 sum(df_test$nonret2_days70)  ## 1059 
 0.9 * nrow(df)
+
 
 # ---- 2. Fit logistic models (outcome is test nonreturn within 7, 14, 28 or 70 days) ----
 # Code for fitting models is partly from Madison Luick
@@ -128,7 +133,7 @@ for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonre
   coef_logistic <- rbind(coef_logistic, tab_logistic)
   
   # Create predictions on the held out test set
-  # What to do with year 2024 not in factor level?
+  # What to do with year 2024 not in factor level? Atm just assigning it the highest possible value (2023)
   df_new <- df
   df_new$request_year_factor[df_new$request_year_factor == 2024] <- 2023
   pred <- predict(fit_logistic, newdata=df_new, type='response')
@@ -310,6 +315,11 @@ write.csv(pred_gam, file.path(out_path, 'gam-pred.csv'), row.names=FALSE)
 
 
 # ---- 4. Time-to-event analysis (analysing type 1 and type 2 nonreturn separately) ----
+# Note: results from this section are not included in the publication. 
+# Given the short required follow up of 70 days, and a small number of deaths (116) during the 70-day period,
+# it is unlikely that Cox models would provide notably better estimates or insight over logistic models.
+# The logistic models are also simpler and easier to interpret.
+# The KM-curves computed here use training set data only (KM-curves on full data are generated in section 7)
 
 # Train test split
 df_full_train <- df_full[df_full$test_set == 0,]
@@ -556,7 +566,8 @@ plot(p_sub$y_pred, p_sub$y_pred_cox)
 
 
 # ---- 5. Logistic models on imputed data ----
-
+# This section imputes data using MICE before fitting logistic models
+# This is not done by default, as data may not be missing at random.
 if(run_on_imputed_data){
     
   coef_logistic_imp <- data.frame()
@@ -626,7 +637,8 @@ if(run_on_imputed_data){
   write.csv(coef_logistic_imp, file.path(out_path, 'logistic-coef-imp.csv'), row.names=FALSE)
 }
 
-# ---- 6. Logistic models on full data (all requests) ----
+
+# ---- 6. Logistic models with multiple requests per patient ----
 
 # Read data
 df <- read_csv("Z:/fit_nonreturn_paper_20250417/data/fit_nonret.csv")
@@ -736,6 +748,7 @@ write.csv(pred_logistic_mult, file.path(out_path, 'logistic-pred-mult.csv'), row
 
 
 # ---- 7. KM curves and conditional probability curves without train-test split ----
+# These are included in the publication. The train-test split is only for evaluating performance of models
 
 # Result containers
 return_time <- data.frame()

@@ -112,12 +112,12 @@ delta.describe(percentiles=[0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.3, 0.9, 0.95, 0.
 #region
 
 # Correct the FIT request date
-#  Hypothesis: fit_request_or_sample_date is by default the request date. 
+#  Note that fit_request_or_sample_date is by default the request date. 
 #   when the sample is received in the lab, 
 #   it is changed to sample date (or to receipt date if sample date was not known)
 #   and in that case the 'fit_request_date' column is separately given as the original date
 # 
-#  This is confirmed by the following:
+#  This is confirmed by Brian Shine, and also the following:
 #  (1) "fit_request_or_sample_date" is 99% of times equal to "fit_date" in gplims when both dates are available
 #  (2) when "fit_request_date" is not available, then 97% of times there's no ICEN number in lims table,
 #      and when it is available, then 99% of times there is ICEN number in lims table.
