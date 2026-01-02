@@ -428,7 +428,7 @@ g.loc[mask, 'days_to_return'] = g.loc[mask, 'fit_request_date_fu']
 assert (g.days_to_return >= 0).all()
 
 # Given that we consider max 365 day fu (longer returns excluded), set max censored days to return to 365
-g.loc[(g.censored == 1) & (g.fit_request_date_fu > 365), 'days_to_return'] = 365
+g.loc[(g.censored == 1) & (g.days_to_return > 365), 'days_to_return'] = 365
 
 # Get type 1 return, where tests under another request number are not considered
 g['days_to_return_type1'] = (g.fit_date_received - g.fit_request_date_corrected).dt.days
@@ -447,7 +447,7 @@ mask = (g.censored_type1 == 1) & (g.death_date.isna())
 print(mask.sum())  #12823
 g.loc[mask, 'days_to_return_type1'] = g.loc[mask, 'fit_request_date_fu']
 
-g.loc[(g.censored_type1 == 1) & (g.fit_request_date_fu > 365), 'days_to_return_type1'] = 365
+g.loc[(g.censored_type1 == 1) & (g.days_to_return > 365), 'days_to_return_type1'] = 365
 assert (g.days_to_return_type1 >= 0).all()
 print(g.fit_return.mean(), g.fit_return_type1.mean())
 
@@ -512,8 +512,6 @@ assert g.shape[0] + 323 + 36 + (144 - 72) == gpreqs.shape[0]
 
 # ---- 5. Add demographics ----
 #region
-
-assert g.shape[0] + 323 + 36 == gpreqs.shape[0]
 
 # Add demographics
 demo = pd.read_parquet(data_path / 'demographics')
