@@ -4,8 +4,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 
-# DBL CHECK DEATH DATE
-
 data_path = Path('Z:/fit_dataproduct_20240626')
 
 
