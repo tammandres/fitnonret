@@ -638,116 +638,7 @@ if(run_on_imputed_data){
 }
 
 
-# ---- 6. Logistic models with multiple requests per patient ----
-
-# Read data
-df <- read_csv("Z:/fit_nonreturn_paper_20250417/data/fit_nonret.csv")
-nrow(df)
-
-# IMD to factor
-df$imd_quintile_factor <- df$imd_quintile
-df$imd_quintile_factor[is.na(df$imd_quintile)] <- 'Not known'
-df$imd_quintile_factor <- factor(df$imd_quintile_factor)
-df$imd_quintile_factor <- relevel(df$imd_quintile_factor, ref='5')
-
-# Set White as reference
-df$ethnicity <- factor(df$ethnicity)
-df$ethnicity <- relevel(df$ethnicity, ref='White')
-
-# Set youngest age group as ref
-df$age_group <- factor(df$age_group)
-df$age_group <- relevel(df$age_group, ref='18-39')
-
-# Time to factor
-df$request_year_factor <- factor(df$request_year)
-df$request_year_factor <- relevel(df$request_year_factor, ref='2017')
-df$request_month_factor <- factor(df$request_month)
-df$request_month_factor <- relevel(df$request_month_factor, ref='1')
-
-# Use time with daily precision (more precision not needed)
-df$days_to_return <- round(df$days_to_return, digits=0)
-df$days_to_return_type1 <- round(df$days_to_return_type1, digits=0)
-
-# Drop patients without 70-day follow-up
-nrow(df)
-df <- df[df$fit_request_date_fu >= 70,]
-nrow(df)
-sum(is.na(df$nonret2_days70))
-sum(is.na(df$nonret2_days14))
-
-# Drop requests where patients died before 70-day follow-up without returning a test (162)
-mask <- (df$censored == 1) & (!is.na(df$days_to_death)) & (df$days_to_death <= 70)
-sum(mask)
-nrow(df)
-df <- df[!mask,]
-nrow(df)
-
-# Train test split
-df_train <- df[df$test_set == 0,]
-df_test <- df[df$test_set == 1,]
-df_train <- df_train[,colnames(df_train) != 'test_set']
-
-# Dbl check that the few >365 returns are dropped
-max(df[df$fit_return_type1 == 1,]$days_to_return_type1)
-
-# Fit models
-coef_logistic_mult <- data.frame()
-pred_logistic_mult <- data.frame()
-
-for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonret2_days70',
-                     'nonret1_days7', 'nonret1_days14', 'nonret1_days28', 'nonret1_days70')){
-  print(outcome_col)
-  
-  # Fit simplest logistic model
-  formula = paste(outcome_col, "~ gender_male + age_group + ethnicity + imd_quintile_factor + request_year_factor + request_month_factor")
-  fit_logistic <- glm(as.formula(formula), data=df_train, family = binomial(link="logit"))
-  summary(fit_logistic)
-  
-  # Reformat the model summary
-  tab_logistic <- data.frame(coef(summary(fit_logistic)))
-  tab_logistic$Predictor <- rownames(tab_logistic)
-  tab_logistic <- tab_logistic[,c(5, 1,2,3,4)]
-  rownames(tab_logistic) <- NULL
-  tab_logistic$OR <- round(exp(tab_logistic$Estimate),2)
-  tab_logistic$`OR low` <- round(exp(tab_logistic$Estimate - 1.96 * tab_logistic$`Std..Error`),2)
-  tab_logistic$`OR upp` <- round(exp(tab_logistic$Estimate + 1.96 * tab_logistic$`Std..Error`),2)
-  tab_logistic <- tab_logistic[,c('Predictor', 'OR', 'OR low', 'OR upp', 'Pr...z..')]
-  colnames(tab_logistic)[5] <- 'P value'
-  
-  tab_logistic$`P value sig` <- ''
-  tab_logistic$`P value sig`[tab_logistic$`P value` < 0.05] <- '*'
-  tab_logistic$`P value sig`[tab_logistic$`P value` < 0.01] <- '**'
-  tab_logistic$`P value sig`[tab_logistic$`P value` < 0.001] <- '***'
-  
-  tab_logistic$`P value` <- round(tab_logistic$`P value`, 4)
-  tab_logistic$`P value`[tab_logistic$`P value` == 0] <- '<0.001'
-  tab_logistic$`P value`[tab_logistic$`P value` == 1e-4] <- '0.001'
-  print(tab_logistic)
-  
-  tab_logistic$outcome <- outcome_col
-  coef_logistic_mult <- rbind(coef_logistic_mult, tab_logistic)
-  
-  # Create predictions on the held out test set
-  # What to do with year 2024 not in factor level?
-  df_new <- df
-  df_new$request_year_factor[df_new$request_year_factor == 2024] <- 2023
-  pred <- predict(fit_logistic, newdata=df_new, type='response')
-  pred <- data.frame(patient_id=df$patient_id, 
-                     icen=df$icen, 
-                     y_pred=pred, 
-                     y_true=df[[outcome_col]],
-                     outcome=outcome_col,
-                     test_set=df$test_set)
-  pred_logistic_mult <- rbind(pred_logistic_mult, pred)
-  
-}
-
-## Save
-write.csv(coef_logistic_mult, file.path(out_path, 'logistic-coef-mult.csv'), row.names=FALSE)
-write.csv(pred_logistic_mult, file.path(out_path, 'logistic-pred-mult.csv'), row.names=FALSE)
-
-
-# ---- 7. KM curves and conditional probability curves without train-test split ----
+# ---- 6. KM curves and conditional probability curves without train-test split ----
 # These are included in the publication. The train-test split is only for evaluating performance of models
 
 # Result containers
@@ -977,3 +868,112 @@ for(out_col in c('days_to_return', 'days_to_return_type1')){
 
 write.csv(return_time, file.path(out_path, 'return_time_data-full_fu-70_years-23-24.csv'), row.names=FALSE)
 write.csv(km_curve, file.path(out_path, 'km_curve_data-full_years-23-24.csv'), row.names=FALSE)
+
+
+# ---- 7. Logistic models with multiple requests per patient ----
+
+# Read data
+df <- read_csv("Z:/fit_nonreturn_paper_20250417/data/fit_nonret.csv")
+nrow(df)
+
+# IMD to factor
+df$imd_quintile_factor <- df$imd_quintile
+df$imd_quintile_factor[is.na(df$imd_quintile)] <- 'Not known'
+df$imd_quintile_factor <- factor(df$imd_quintile_factor)
+df$imd_quintile_factor <- relevel(df$imd_quintile_factor, ref='5')
+
+# Set White as reference
+df$ethnicity <- factor(df$ethnicity)
+df$ethnicity <- relevel(df$ethnicity, ref='White')
+
+# Set youngest age group as ref
+df$age_group <- factor(df$age_group)
+df$age_group <- relevel(df$age_group, ref='18-39')
+
+# Time to factor
+df$request_year_factor <- factor(df$request_year)
+df$request_year_factor <- relevel(df$request_year_factor, ref='2017')
+df$request_month_factor <- factor(df$request_month)
+df$request_month_factor <- relevel(df$request_month_factor, ref='1')
+
+# Use time with daily precision (more precision not needed)
+df$days_to_return <- round(df$days_to_return, digits=0)
+df$days_to_return_type1 <- round(df$days_to_return_type1, digits=0)
+
+# Drop patients without 70-day follow-up
+nrow(df)
+df <- df[df$fit_request_date_fu >= 70,]
+nrow(df)
+sum(is.na(df$nonret2_days70))
+sum(is.na(df$nonret2_days14))
+
+# Drop requests where patients died before 70-day follow-up without returning a test (162)
+mask <- (df$censored == 1) & (!is.na(df$days_to_death)) & (df$days_to_death <= 70)
+sum(mask)
+nrow(df)
+df <- df[!mask,]
+nrow(df)
+
+# Train test split
+df_train <- df[df$test_set == 0,]
+df_test <- df[df$test_set == 1,]
+df_train <- df_train[,colnames(df_train) != 'test_set']
+
+# Dbl check that the few >365 returns are dropped
+max(df[df$fit_return_type1 == 1,]$days_to_return_type1)
+
+# Fit models
+coef_logistic_mult <- data.frame()
+pred_logistic_mult <- data.frame()
+
+for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonret2_days70',
+                     'nonret1_days7', 'nonret1_days14', 'nonret1_days28', 'nonret1_days70')){
+  print(outcome_col)
+  
+  # Fit simplest logistic model
+  formula = paste(outcome_col, "~ gender_male + age_group + ethnicity + imd_quintile_factor + request_year_factor + request_month_factor")
+  fit_logistic <- glm(as.formula(formula), data=df_train, family = binomial(link="logit"))
+  summary(fit_logistic)
+  
+  # Reformat the model summary
+  tab_logistic <- data.frame(coef(summary(fit_logistic)))
+  tab_logistic$Predictor <- rownames(tab_logistic)
+  tab_logistic <- tab_logistic[,c(5, 1,2,3,4)]
+  rownames(tab_logistic) <- NULL
+  tab_logistic$OR <- round(exp(tab_logistic$Estimate),2)
+  tab_logistic$`OR low` <- round(exp(tab_logistic$Estimate - 1.96 * tab_logistic$`Std..Error`),2)
+  tab_logistic$`OR upp` <- round(exp(tab_logistic$Estimate + 1.96 * tab_logistic$`Std..Error`),2)
+  tab_logistic <- tab_logistic[,c('Predictor', 'OR', 'OR low', 'OR upp', 'Pr...z..')]
+  colnames(tab_logistic)[5] <- 'P value'
+  
+  tab_logistic$`P value sig` <- ''
+  tab_logistic$`P value sig`[tab_logistic$`P value` < 0.05] <- '*'
+  tab_logistic$`P value sig`[tab_logistic$`P value` < 0.01] <- '**'
+  tab_logistic$`P value sig`[tab_logistic$`P value` < 0.001] <- '***'
+  
+  tab_logistic$`P value` <- round(tab_logistic$`P value`, 4)
+  tab_logistic$`P value`[tab_logistic$`P value` == 0] <- '<0.001'
+  tab_logistic$`P value`[tab_logistic$`P value` == 1e-4] <- '0.001'
+  print(tab_logistic)
+  
+  tab_logistic$outcome <- outcome_col
+  coef_logistic_mult <- rbind(coef_logistic_mult, tab_logistic)
+  
+  # Create predictions on the held out test set
+  # What to do with year 2024 not in factor level?
+  df_new <- df
+  df_new$request_year_factor[df_new$request_year_factor == 2024] <- 2023
+  pred <- predict(fit_logistic, newdata=df_new, type='response')
+  pred <- data.frame(patient_id=df$patient_id, 
+                     icen=df$icen, 
+                     y_pred=pred, 
+                     y_true=df[[outcome_col]],
+                     outcome=outcome_col,
+                     test_set=df$test_set)
+  pred_logistic_mult <- rbind(pred_logistic_mult, pred)
+  
+}
+
+## Save
+write.csv(coef_logistic_mult, file.path(out_path, 'logistic-coef-mult.csv'), row.names=FALSE)
+write.csv(pred_logistic_mult, file.path(out_path, 'logistic-pred-mult.csv'), row.names=FALSE)
