@@ -24,4 +24,11 @@ Code was run in the following order:
 4. `plots.py` : create graphs that illustrate model performance and test return probabilities over time
 5. `tables.py` : create descriptive statistics tables
 
-
+To run from command line:
+```
+python datacopy.py
+python dataprep.py
+RScript models.R
+python plots.py
+python tables.py
+```
