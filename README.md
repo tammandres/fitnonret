@@ -1,6 +1,6 @@
 # Analysis of FIT test non-return in Oxfordshire
 
-This code accompanies the manuscript "Should patient characteristics or the time from test request trigger reminders to return Faecal Immunochemical Tests in primary care?", authored by Andres Tamm, Madison Luick, Carmen Fierro Martinez, Brian Shine, Tim James, James E. East, Catia Nicodemo, Stavros Petrou, and Brian D. Nicholson.
+This code accompanies the manuscript "Should patient characteristics or the time from test request trigger reminders to return Faecal Immunochemical Tests in primary care?", authored by Andres Tamm, Madison Luick, Carmen Fierro Martinez, Brian Shine, Tim James, Jaimie Withers, James E. East, Jim Davies, Catia Nicodemo, Stavros Petrou, and Brian D. Nicholson.
 
 Andres Tamm
 
