@@ -298,7 +298,7 @@ tmp.loc[mask, ['patient_id', 'fit_request_date_corrected', 'request_date2', 'ice
 g2 = g2.loc[~g2.icen.isin(tmp.icen)]
 print(g2.shape[0])
 
-# Get the most recent unlabelled result
+# Get the most earliest unlabelled result
 idxmin = g2.groupby('icen')['fit_date_received'].idxmin()
 g2 = g2.loc[idxmin]
 print(g2.shape[0])
@@ -326,7 +326,7 @@ g3.shape[0]
 # Remove where there was already an unlabelled result before
 g3 = g3.loc[~g3.icen.isin(g2.icen)]
 
-# Get the most recent labelled result
+# Get the earliest labelled result
 idxmin = g3.groupby('icen')['fit_date_received'].idxmin()
 g3 = g3.loc[idxmin]
 print(g3.shape[0])
@@ -400,7 +400,7 @@ g.loc[mask, 'days_to_return'] = 366
 demo = pd.read_parquet(data_path / 'demographics')
 death = demo[['patient_id', 'death_date']].drop_duplicates()
 shape0 = g.shape[0]
-g = g.merge(death, how='left').merge(death, how='left')
+g = g.merge(death, how='left')
 assert g.shape[0] == shape0
 
 # Get overall censoring indicator and return indicator
@@ -409,7 +409,7 @@ g.days_to_return.isna().mean()
 g['censored'] = g.days_to_return.isna().astype(int)
 g['fit_return'] = (1 - g.censored).astype(int)
 
-print(g.loc[g.return_type != 'kit_rom_another_icen'].days_to_return.max())
+print(g.loc[g.return_type != 'kit_from_another_icen'].days_to_return.max())
 
 # For censored tests, set days_to_return as days to datacut (if no death), or days to death (if death)
 print(g.days_to_return.max())
@@ -447,7 +447,7 @@ mask = (g.censored_type1 == 1) & (g.death_date.isna())
 print(mask.sum())  #12823
 g.loc[mask, 'days_to_return_type1'] = g.loc[mask, 'fit_request_date_fu']
 
-g.loc[(g.censored_type1 == 1) & (g.days_to_return > 365), 'days_to_return_type1'] = 365
+g.loc[(g.censored_type1 == 1) & (g.days_to_return_type1 > 365), 'days_to_return_type1'] = 365
 assert (g.days_to_return_type1 >= 0).all()
 print(g.fit_return.mean(), g.fit_return_type1.mean())
 
