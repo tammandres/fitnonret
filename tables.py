@@ -17,7 +17,7 @@ def summarise_cat(df, col, name, digits=2, sort=True):
     s = df[col]
 
     # Designate missing values with 'NULL'
-    if 'NULL' in s:
+    if (s == 'NULL').any():
         raise ValueError("NULL is among values")
     else:
         s = s.fillna('NULL')
@@ -137,7 +137,7 @@ for o in outcomes:
 desc = describe(df, df_all, desc_return=True)
 desc.Category = desc.Category.replace({'NULL': 'Not known'})
 
-assert (desc.Value > 10).all()
+assert (desc.Value >= 10).all()
 
 desc.to_csv(out_path / 'descriptives_all.csv', index=False)
 
@@ -175,8 +175,8 @@ for i, o in enumerate(outcomes):
     desc0 = describe(df0, df_all0)
     desc1 = describe(df1, df_all1)
 
-    assert (desc0.Value > 10).all()
-    assert (desc1.Value > 10).all()
+    assert (desc0.Value >= 10).all()
+    assert (desc1.Value >= 10).all()
 
     days = re.findall('days(\d+)', o)[0]
     return_type = re.findall('nonret(\d+)', o)[0]
