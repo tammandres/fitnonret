@@ -666,8 +666,8 @@ gsub = gsub.reset_index(drop=True)
 #     without returning their test in 70 days, so they were excluded due to lack of follow-up.
 #
 # Overall, 69,240 patients had full 70-day follow up,
-# so 7,147 of these patients with most recent requests amounst to 7,147 / 69,240 = 0.103 (10.3%)
-# and so the original goal of having a 10% test set is still met.
+# so 7,147 of these patients with most recent requests amounts to 7,147 / 69,240 = 0.103 (10.3%)
+# and so the original goal of having a 10% test set was still met.
 # 
 # If this code was to be run again, it could be made clearer by
 #  Fully isolating patients with 70-day follow-up, i.e.
