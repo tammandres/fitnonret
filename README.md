@@ -35,4 +35,4 @@ python plots.py
 python tables.py
 ```
 
-Note: the data on which the scripts were run cannot unfortunately be shared, as it is based on pseudonymised patient data.
+Note: the data on which the scripts were run cannot be shared, as it is based on pseudonymised patient data.
