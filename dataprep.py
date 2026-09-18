@@ -650,7 +650,7 @@ gsub = gsub.reset_index(drop=True)
 #
 # The code performed test set assignment not exactly as intended:
 # the test set turned out to be 10.3% not 10% of most recent patients with 70 day follow-up.
-# This is not really an issue, but this comments explains how this came about.
+# This is not really an issue, but this comment explains how this came about.
 #
 #  1) The number of patients to be assigned to the test set was computed as
 #     10% of all valid patients (7156: 10% of gsub.shape[0] of 71,560),
@@ -659,7 +659,7 @@ gsub = gsub.reset_index(drop=True)
 #  2) Then, the 7156 patients with most recent test requests 
 #     were selected among those who had at least 70 days until data extraction date.
 #     Note that most patients with at least 70 days until data extraction date
-#     do have 79-day follow-up, but a small proportion do not because of death:
+#     do have 70-day follow-up, but a small proportion do not because of death:
 #     i.e. they died without returning their test before 70 days passed.
 #     The variable 'fit_request_date_fu' only encompasses the "at least 70 days until data extraction criterion".
 #  3) The final number in the test set is thus 7,147,because some patients with 70 days until data extraction date died
