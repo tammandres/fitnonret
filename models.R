@@ -467,9 +467,9 @@ for(out_col in c('days_to_return', 'days_to_return_type1')){
   km_curve_grouped <- rbind(km_curve_grouped, df_km_grouped)
   
   p <- ggplot(data=df_km_grouped) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70) + facet_wrap(vars(variable))
-  p <- ggplot(data=df_km_grouped[df_km_grouped$var=='age_group',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
-  p <- ggplot(data=df_km_grouped[df_km_grouped$var=='ethnicity',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
-  p <- ggplot(data=df_km_grouped[df_km_grouped$var=='imd_quintile_factor',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
+  p <- ggplot(data=df_km_grouped[df_km_grouped$variable=='age_group',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
+  p <- ggplot(data=df_km_grouped[df_km_grouped$variable=='ethnicity',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
+  p <- ggplot(data=df_km_grouped[df_km_grouped$variable=='imd_quintile_factor',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
   
   # KM curves only for those who return test: by gender, age, ethnicity, and deprivation
   df_km_grouped_return <- data.frame()
