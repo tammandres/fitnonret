@@ -647,7 +647,33 @@ g = g.reset_index(drop=True)
 gsub = gsub.reset_index(drop=True)
 
 # Assign most recent 10% of patients with 70-day fu as the test set 
-# Note 2025-10-09: the code currently assigns 10% of all patients (not just those with 70-day fu): gsub.shape[0] not gsubsub.shape[0]
+#
+# The code performed test set assignment not exactly as intended:
+# the test set turned out to be 10.3% not 10% of most recent patients with 70 day follow-up.
+# This is not really an issue, but this comments explains how this came about.
+#
+#  1) The number of patients to be assigned to the test set was computed as
+#     10% of all valid patients (7156: 10% of gsub.shape[0] of 71,560),
+#     whether or not they had a 70-day follow-up.
+#     This was unintended -> the number was meant to be computed among those with fu.
+#  2) Then, the 7156 patients with most recent test requests 
+#     were selected among those who had at least 70 days until data extraction date.
+#     Note that most patients with at least 70 days until data extraction date
+#     do have 79-day follow-up, but a small proportion do not because of death:
+#     i.e. they died without returning their test before 70 days passed.
+#     The variable 'fit_request_date_fu' only encompasses the "at least 70 days until data extraction criterion".
+#  3) The final number in the test set is thus 7,147,because some patients with 70 days until data extraction date died
+#     without returning their test in 70 days, so they were excluded due to lack of follow-up.
+#
+# Overall, 69,240 patients had full 70-day follow up,
+# so 7,147 of these patients with most recent requests amounst to 7,147 / 69,240 = 0.103 (10.3%)
+# and so the original goal of having a 10% test set is still met.
+# 
+# If this code was to be run again, it could be made clearer by
+#  Fully isolating patients with 70-day follow-up, i.e.
+#    1) those who have at least 70 days until data extraction date (fit_request_fu >= 70)
+#    2) AND those who did not die within 70 days after FIT request without returning their test.
+#  And then computing 10% of that patient set and selecting 10% most recent from there.
 gsub = gsub.sort_values(by=['fit_request_date_corrected'])
 assert (gsub.loc[gsub.fit_request_date_fu < 70].index == gsub.loc[gsub.nonret1_days70.isna()].index).all()
 gsubsub = gsub.loc[gsub.fit_request_date_fu >= 70]
