@@ -6,7 +6,7 @@ from sklearn.metrics import precision_recall_curve, roc_auc_score, average_preci
 
 #plt.style.use('ggplot')
 data_path = Path(r'Z:\fit_nonreturn_paper_20250417\data')
-out_path = Path(r'Z:\fit_nonreturn_paper_20250417\results')
+out_path = Path(r'Z:\fit_nonreturn_paper_20250417\results_fixed')
 in_path = out_path
 
 hide_small_km_counts = True
@@ -98,6 +98,10 @@ name_map = {
     'request_month_factor11': 'Request month 11 (vs 1)', 
     'request_month_factor12': 'Request month 12 (vs 1)'
 }
+
+df = df.rename(columns={'variable': 'Predictor', 'or': 'OR'})
+df['OR low'] = df.or_ci.str.extract(r'\((\d+\.\d+)').astype(float)
+df['OR upp'] = df.or_ci.str.extract(r'(\d+\.\d+)\)').astype(float)
 
 for o in outcome:
     dfsub = df.loc[df.outcome == o]
@@ -223,7 +227,6 @@ pr_curve.to_csv(out_path / 'gam_prcurve.csv', index=False)
 
 # KM panel curve - on full data (not training data), 
 # and restricting the return time curve to 70-day fu for more meaningful estimate
-# Reported in publication as the primary curve
 df = pd.read_csv(out_path / 'km_curve_data-full.csv')
 df_return = pd.read_csv(out_path / 'return_time_data-full_fu-70.csv')
 
@@ -352,31 +355,7 @@ s
 
 #endregion
 
-# ---- Proportion of patients who returned a test within a given time, of all returners
-#region
-df = pd.read_csv(out_path / 'return_time.csv')
-
-return_types = df.return_type.unique()
-for r in return_types:
-    print(r)
-    dfsub = df.loc[(df.return_type == r) & (df.time <= 70)]
-
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.plot(dfsub.time, dfsub.perc)
-    ax.scatter(dfsub.time, dfsub.perc, s=10)
-    ax.set_yticks(np.arange(0, 105, 5))
-    ax.set_xticks(np.arange(0, 75, 5))
-    ax.set(xlabel='Days from FIT test request (t)',
-           ylabel='Percent of tests returned among returners',
-           xlim=(0-70*0.05, 70*1.05), ylim=(0-100*0.05, 105))
-    ax.grid(which='major', alpha=0.5)
-
-    out_name = 'prob_return_among_return_type' + str(r) + '.png'
-    plt.savefig(out_path / out_name, dpi=300, bbox_inches='tight')
-
-#endregion
-
-# ---- Plot GAMs
+# ---- Plot shape functions of GAM
 #region
 
 # Plot gam effects on linear predictor scale

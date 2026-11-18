@@ -20,10 +20,10 @@ Code was run in the following order:
 
 1. `datacopy.py` : combines data extracts from the clinical datawarehouse into a single folder
 2. `dataprep.py` : prepares the dataset for modelling, such as creating 70-day non-return indicators
-3. `models.R` : FIT logistic and generalised additive models in R
-4. `plots.py` : create graphs that illustrate model performance and test return probabilities over time
-5. `tables.py` : create descriptive statistics tables
-6. `logistic2023.R` : sensitivity analysis - compute odds-ratios for socidoemographic variables on most recent data (>= 2023-01-01)
+3. `models.R`    : FIT logistic and generalised additive models in R
+4. `plots.py`    : create graphs that illustrate model performance and test return probabilities over time
+5. `tables.py`   : create descriptive statistics tables
+6. `logistic2023.R`              : sensitivity analysis - compute odds-ratios for socidoemographic variables on most recent data (>= 2023-01-01)
 7. `check_test_set_stability.py` : sensitivity analysis - check how much positivity curves vary across random data splits (10-fold CV repeated 10 times)
 
 To run from command line:

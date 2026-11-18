@@ -37,7 +37,7 @@ if dates_to_datetime:
 print(gpreqs.fit_request_date.max(), gplims.fit_date_authorised.max())
 print(gpreqs.fit_request_date.min(), gplims.fit_date_authorised.min())
 
-# Check: icen in gplims are almost always in gpreqs, with 103 expections
+# Check: icen in gplims are almost always in gpreqs (99.9%)
 gplims.dropna(subset='icen').icen.isin(gpreqs.icen).mean()
 (~gplims.dropna(subset='icen').icen.isin(gpreqs.icen)).sum()
 
@@ -56,8 +56,6 @@ assert gpreqs.icen.nunique() == gpreqs.shape[0]
 #region
 
 # fit_request_or_sample_date vs fit_request_date
-#  When fit_request_or_sample date and fit_request_date are both available
-#  then fit_request_date is smaller in about 71% of cases, equal in about 28% of cases, and greater in about 0.7% of cases
 delta = gpreqs.fit_request_or_sample_date - gpreqs.fit_request_date 
 delta = delta[~gpreqs.fit_request_date.isna()]
 delta.describe(percentiles=[0.0001, 0.001, 0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.9, 0.99, 0.999, 0.9999])
@@ -106,16 +104,14 @@ delta.describe(percentiles=[0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.3, 0.9, 0.95, 0.
 #endregion
 
 
-# ---- 3. Correct fit request and sample dates ----
+# ---- 3. Correct fit request date and compute days of follow-up ----
 #region
-
-# Correct the FIT request date
-#  Note that fit_request_or_sample_date is by default the request date. 
+#  Hypothesis: fit_request_or_sample_date is by default the request date. 
 #   when the sample is received in the lab, 
 #   it is changed to sample date (or to receipt date if sample date was not known)
 #   and in that case the 'fit_request_date' column is separately given as the original date
 # 
-#  This is confirmed by Brian Shine, and also the following:
+#  This is confirmed by the following:
 #  (1) "fit_request_or_sample_date" is 99% of times equal to "fit_date" in gplims when both dates are available
 #  (2) when "fit_request_date" is not available, then 97% of times there's no ICEN number in lims table,
 #      and when it is available, then 99% of times there is ICEN number in lims table.
@@ -123,7 +119,6 @@ delta.describe(percentiles=[0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.3, 0.9, 0.95, 0.
 #  Therefore, "fit_request_date_corrected" is set equal to "fit_request_date" (dtc2, dtcorig) when that is available
 #  and otherwise set equal to "fit_request_or_sample_date" (dtc)
 
-# .... 3.1. Correct the FIT request date ....
 mask = ~gpreqs.fit_request_date.isna()
 gpreqs['fit_request_date_corrected'] = gpreqs.fit_request_or_sample_date.copy()
 gpreqs.loc[mask, 'fit_request_date_corrected'] = gpreqs.loc[mask].fit_request_date
@@ -144,71 +139,38 @@ test.groupby('no_dtc2').icen_in_lims.value_counts(sort=False)
 test.groupby('no_dtc2').icen_in_lims.value_counts(sort=False, normalize=True)
 
 # Compute length of follow-up from FIT request date to datacut of lab results 
-# Note: the lab results were extracted in February 2024, but date shifts were applied
-# the max date in the processed lab data is thus different than datacut
-# Solution: use max date observed in the data
-# atm, do not use datacut, but max fit date received - as the latter is slightly larger
-max_date = gplims.fit_date_received.max()
-gpreqs['fit_request_date_fu'] = max_date - gpreqs.fit_request_date_corrected
+# The lab results were extracted on 2024-02-27, which serves as the date of datacut 
+# (it is not possible to know if a test was returned or not after that date).
+# However, the dates of each patient were randomly shifted by d ~ U(-30, +30) days given patient-specific random offset.
+# This means that calculated days to datacut would be smaller by up to 30 days for some patients
+#  which would be fine to use in models, as they still had *at least* that number of days and patients with shortened days are completely randomly selected
+# but for others the days to datacut would be greater by up to 30 days, which is incorrect.
+# To get a valid days to datacut for modelling, we thus subtract 30 days.
+# The days to datacut (called "fit_request_date_fu" below) will then represent "minimum days to datacut", i.e. that "at least" that many days
+# The resulting days to follow up can be negative, and the patients with negative data need to be excluded (that is done later)
+datacut = pd.Timestamp(year=2024, month=2,day=27)
+gpreqs['fit_request_date_fu_naive'] = datacut - gpreqs.fit_request_date_corrected
+gpreqs['fit_request_date_fu'] = gpreqs['fit_request_date_fu_naive'].copy()
+gpreqs['fit_request_date_fu'] = gpreqs['fit_request_date_fu'] - pd.Timedelta(days=30)
 gpreqs['fit_request_date_fu'] = gpreqs['fit_request_date_fu'].dt.days + gpreqs['fit_request_date_fu'].dt.seconds / (60 * 60 * 24)
-gpreqs['fit_request_date_fu'].describe()
-gpreqs.fit_request_date_fu.min()
+gpreqs.fit_request_date_fu_naive.describe()
+gpreqs.fit_request_date_fu.describe()
 
-# .... 3.2. Correct the FIT date ....
-#  Sometimes FIT sample date is equal to FIT request date.
-#  In these cases, set it equal to FIT date received instead.
-#  It looks like these are examples where the sample date was not known
-#  and was set equal to request date (rather than date received)
-lims['fit_date_corrected'] = lims.fit_date.copy()
-print(lims.shape)
-lims = lims.merge(gpreqs[['patient_id', 'icen', 'fit_request_date', 'fit_request_date_corrected', 'fit_request_or_sample_date']], how='left')
-print(lims.shape)
-mask = lims.fit_date == lims.fit_request_date_corrected
-print(mask.sum())
-lims.loc[mask, 'fit_date_corrected'] = lims.loc[mask, 'fit_date_received']
-gplims = lims.loc[lims.gp_from_icen_and_loc == 1]  # extract gplims again
-
-# Double check time deltas again
-gplims.isna().sum()  # in gplims, fit_request_date not known about 6477 times, fit_Request_date_corrected not known 5997 times
-
-test = gplims.fit_date_corrected == gplims.fit_date_received
-test = test.loc[~gplims.fit_date_corrected.isna()]
-print(test.sum(), test.mean())  # In about 55% of times, fit sample date is not known and equal to date received
-
-test = gplims.fit_date_corrected == gplims.fit_request_date_corrected
-test = test.loc[~gplims.fit_request_date_corrected.isna()]
-print(test.sum(), test.mean())  # In 69 times, fit_date_corrected equal to fit_request_date
-
-test = gplims.fit_date_corrected > gplims.fit_request_date_corrected
-test = test.loc[~gplims.fit_request_date_corrected.isna()]
-print(test.sum(), test.mean())  # In 99% of times, fit_date_corrected is greater than fit_request_date_corrected
-
-# Review time from request, to sample, to received
-delta = gplims.fit_date_corrected - gplims.fit_request_date_corrected
-delta2 = gplims.fit_date_received - gplims.fit_request_date_corrected
-print(delta.describe(percentiles=[0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.8, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99]))
-print(delta2.describe(percentiles=[0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.8, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99]))
-
-# Another check 
-gplims.isna().sum()
-mask = gplims.fit_date > gplims.fit_date_received
-print(mask.sum(), mask.mean())  ## FIT date is never greater than date received
-
-mask = gplims.fit_date_corrected > gplims.fit_date_received
-print(mask.sum(), mask.mean())  ## FIT date corrected is never greater than date received
-
-mask = gplims.fit_request_date_corrected > gplims.fit_date_received
-print(mask.sum(), mask.mean())  ## FIT request date corrected is greater than date received in 325 cases
-
-mask = gplims.fit_request_or_sample_date > gplims.fit_date_received
-print(mask.sum(), mask.mean())  ## FIT request date corrected is greater than date received in 325 cases
-
-delta = gplims.fit_date_received - gplims.fit_date_corrected  #
-delta.describe(percentiles=[0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99])
-
-# Indicator for sample date not known
-gplims['fit_sample_date_not_known'] = (gplims.fit_date_corrected == gplims.fit_date_received).astype(int)
-print(gplims.fit_sample_date_not_known.mean())
+# Correct fit_request_date_fu (days to datacut) to account for death 
+# if death occurred after fit request date and before datacut, set fit_request_date_fu as days to death
+demo = pd.read_parquet(data_path / 'demographics')
+death = demo[['patient_id', 'death_date']].drop_duplicates()
+shape0 = gpreqs.shape[0]
+gpreqs = gpreqs.merge(death, how='left')
+assert gpreqs.shape[0] == shape0
+gpreqs['death_date'] = pd.to_datetime(gpreqs['death_date'], format="%Y-%m-%d")
+gpreqs['days_to_death'] = (gpreqs.death_date - gpreqs.fit_request_date_corrected)
+gpreqs['days_to_death'] = gpreqs['days_to_death'].dt.days + gpreqs['days_to_death'].dt.seconds / (60 * 60 * 24)
+assert (gpreqs.days_to_death.dropna() >= 0).all()
+mask = ~gpreqs.days_to_death.isna() & (gpreqs.days_to_death < gpreqs.fit_request_date_fu)
+mask.sum()
+gpreqs.loc[mask, 'fit_request_date_fu'] = gpreqs.loc[mask, 'days_to_death']
+gpreqs.fit_request_date_fu.describe()
 
 #endregion
 
@@ -218,12 +180,11 @@ print(gplims.fit_sample_date_not_known.mean())
 
 # Dbl check date ranges
 print(gpreqs.fit_request_date_corrected.min(), gpreqs.fit_request_date_corrected.max())
-print(gplims.fit_request_date_corrected.min(), gplims.fit_request_date_corrected.max())
 
 # Retain relevant columns
-gpreqs_sub = gpreqs[['patient_id', 'icen', 'gp', 'fit_request_date_corrected', 'icen_in_lims', 'fit_request_date_fu']]
-gplims_sub = gplims[['patient_id', 'icen', 'fit_date_corrected', 'fit_date_received', 'fit_date_authorised', 
-                     'fit_request_or_sample_date', 'fit_sample_date_not_known',
+gpreqs_sub = gpreqs[['patient_id', 'icen', 'gp', 'fit_request_date_corrected', 'icen_in_lims', 
+                     'fit_request_date_fu', 'days_to_death']]
+gplims_sub = gplims[['patient_id', 'icen', 'fit_date_received', 'fit_date_authorised', 
                      'fit_val', 'fit_val_clean']]
 
 # Container for requests to be removed
@@ -235,13 +196,15 @@ icen_rm = pd.Series()
 
 # Get all FIT results that have icen number
 gplims_with_icen = gplims_sub.dropna(subset=['icen']).drop_duplicates()
+shape0 = gplims_with_icen.shape[0]
 
-# In a few cases, there are multiple results for the same request number
+# In a few cases, there are multiple results for the same request number (53)
 # Select the first returned result
 #gplims_with_icen.loc[gplims_with_icen.icen.duplicated(keep=False)]  
 gplims_with_icen = gplims_with_icen.sort_values(by=['patient_id', 'icen', 'fit_date_received'])
 gplims_with_icen = gplims_with_icen.groupby(['icen']).first().reset_index()
 assert gplims_with_icen.shape[0] == gplims_with_icen.icen.nunique()
+shape0 - gplims_with_icen.shape[0]
 
 # Then add results to requests
 g0 = gpreqs_sub.merge(gplims_with_icen, how='inner', on=['patient_id', 'icen'])
@@ -249,43 +212,52 @@ assert g0.shape[0] == g0.icen.nunique()
 g0['return_type'] = 'icen_in_lims'
 print(g0.shape[0])
 
-# Remove requests where request date after FIT date received (323 requests where request appeared in lab under same num
-# but request date was after FIT date; 323 patients
+# Remove requests where request date is after FIT date received (323 requests)
 i = g0.loc[g0.fit_date_received < g0.fit_request_date_corrected].icen
 print(i.nunique())
 g0.loc[g0.icen.isin(i)].patient_id.nunique()
+
+shape0 = g0.shape[0]
 g0 = g0.loc[~g0.icen.isin(i)]
+shape0 - g0.shape[0]
+                          
 icen_rm = pd.concat(objs=[icen_rm, i])
 print(g0.shape[0])
 gpreqs_sub = gpreqs_sub.loc[~gpreqs_sub.icen.isin(i)]
+print(g0.shape[0], g0.patient_id.nunique())
 
 #--------
-# 4.2. FIT requests, where the patient does not appear in the lab table at all
+# 4.2. FIT requests, where the patient does not appear in the lab table at all (disjoint from the previous sets by def)
 #--------
 g1 = gpreqs_sub.loc[~gpreqs_sub.patient_id.isin(gplims.patient_id)]
 g1['return_type'] = 'no_lims'
 print(g1.shape[0])
 assert g1.icen.nunique() == g1.shape[0]
+print(g1.shape[0], g1.patient_id.nunique())
 
 #--------
 # 4.3. FIT requests, where the request number does not appear in lab table, 
 # but there is a test result with no request number in the lab table
-# and no other test request occurred in between
+# and no other test request occurred in between (disjoint from the previous sets by def)
 #--------
 
 # FIT results without request number
 gplims_unlabelled = gplims_sub.loc[gplims_sub.icen.isna()].rename(columns={'icen': 'icen_lims'})
 
-# Merge to requests on patient ID
+# Merge FIT results without request number to requests table, merge on patient ID using inner join
+# so we have requests of all patients who had an unlabelled fit result, and the result dates
 g2 = gpreqs_sub.loc[gpreqs_sub.icen_in_lims==0].merge(gplims_unlabelled, on=['patient_id'], how='inner')
 assert not g2.fit_date_received.isna().any()
 
-# Remove where lab result before request (439 requests)
-g2.shape[0]
+# Remove where lab result before request (439)
+shape0 = g2.shape[0]
 g2 = g2.loc[g2.fit_date_received >= g2.fit_request_date_corrected]
-g2.shape[0]
+shape0 - g2.shape[0]
 
 # Remove results where another request number appeared before the unlabelled FIT was received
+#  1. get all fit requests with request number, call the numbers "icen2" and dates "request_date2"
+#  2. add these requests to the table of patients with unlabelled requests from the left side
+#  3. then identify requests where the other request number occurred between the current request number and result
 print(g2.shape[0])
 r = gpreqs_sub[['patient_id', 'fit_request_date_corrected', 'icen']].dropna(subset=['icen'])
 r = r.rename(columns={'fit_request_date_corrected':'request_date2', 'icen': 'icen2'})
@@ -294,11 +266,12 @@ mask = (tmp.request_date2 <= tmp.fit_date_received) & \
        (tmp.request_date2 >= tmp.fit_request_date_corrected) & \
        (tmp.icen != tmp.icen2)
 tmp = tmp.loc[mask]
+assert not tmp.icen2.isna().any()
 tmp.loc[mask, ['patient_id', 'fit_request_date_corrected', 'request_date2', 'icen', 'icen2', 'fit_date_received', 'fit_val']]
 g2 = g2.loc[~g2.icen.isin(tmp.icen)]
 print(g2.shape[0])
 
-# Get the most earliest unlabelled result
+# Get the earliest unlabelled result per request number
 idxmin = g2.groupby('icen')['fit_date_received'].idxmin()
 g2 = g2.loc[idxmin]
 print(g2.shape[0])
@@ -312,13 +285,14 @@ assert g2.icen.nunique() == g2.shape[0]
 # 4.4. FIT requests, where result from another request number occurs nearby
 #--------
 
+# Get lab results with icen number
 gplims_labelled = gplims_sub.loc[~gplims_sub.icen.isna()].rename(columns={'icen': 'icen_lims'})
 
-# Merge to requests on patient ID
+# Merge to requests (that don't have icen in lims) on patient ID, inner join
 g3 = gpreqs_sub.loc[gpreqs_sub.icen_in_lims==0].merge(gplims_labelled, on=['patient_id'], how='inner')
 assert not g3.fit_date_received.isna().any()
 
-# Remove where lab result before request (3966 -- these are not errors as merging data with another request num)
+# Remove where lab result before request (these are not errors as merging data with another request num)
 g3.shape[0]
 g3 = g3.loc[g3.fit_date_received >= g3.fit_request_date_corrected]
 g3.shape[0]
@@ -326,7 +300,7 @@ g3.shape[0]
 # Remove where there was already an unlabelled result before
 g3 = g3.loc[~g3.icen.isin(g2.icen)]
 
-# Get the earliest labelled result
+# Get the earliest labelled result per request number
 idxmin = g3.groupby('icen')['fit_date_received'].idxmin()
 g3 = g3.loc[idxmin]
 print(g3.shape[0])
@@ -347,19 +321,20 @@ assert g.shape[0] == g.icen.nunique()
 assert g.patient_id.isna().sum() == 0
 
 # Add remaining requests
+# Call it "nonreturn_other", because there is no evidence of a kit being returned
+# i.e. no kit with same icen, no unlabelled kit w.o. another request num in between
+# and no kit from another request number
 g_add = gpreqs_sub.loc[~gpreqs_sub.icen.isin(g.icen)]
 print(g_add.shape[0])
 g_add['return_type'] = 'nonreturn_other'
 g = pd.concat(objs=[g, g_add], axis=0)
 
-assert g.shape[0] == g.icen.nunique()
-assert g.icen.isin(gpreqs.icen).all()
-assert gpreqs_sub.icen.isin(g.icen).all()
-assert g.shape[0] == g.icen.nunique()
-assert not g.return_type.isna().any()
+assert g.shape[0] == g.icen.nunique()  # one row per request number
+assert g.icen.isin(gpreqs.icen).all()  # no new request numbers entered
+assert gpreqs_sub.icen.isin(g.icen).all() # all request numbers classified
+assert not g.return_type.isna().any()     # all request numbers classified
 assert g.patient_id.isna().sum() == 0
 print(g.shape[0])
-
 g.return_type.value_counts()
 
 ## Note: at this stage, g includes all requests, except 323 icen where lab date before request date for requests 
@@ -371,6 +346,7 @@ g['days_to_return'] = (g.fit_date_received - g.fit_request_date_corrected).dt.da
 assert (g.days_to_return.dropna() >= 0).all()
 
 # Drop patients with type 1 return after 365 days (36 icen, 36 patients)
+# These are possible data recording errors: the return happened, but its date may not be correct
 # No need to drop type 2 return
 t = g.loc[(~g.days_to_return.isna()) & (g.return_type != 'kit_from_another_icen')]
 t.return_type.unique()
@@ -387,48 +363,43 @@ tsub = t.loc[t.days_to_return > 365]
 tsub.patient_id.nunique()
 assert g.shape[0] + 36 + 323 == gpreqs.shape[0]
 
-# For type 2 returns where return time is after 365 days, 
-# set the time to 366 days (so that indicator for 365 day nonreturn is not affected)
-# but the KM-curve, if calculated, wouldn't go past 365 days.
-mask = g.days_to_return > 365  # mask.sum() == 817
+# Indicator for nonreturn after 365
+mask = g.days_to_return > 365
+mask.sum()
 assert (g.loc[mask, 'return_type'] == 'kit_from_another_icen').all()
 g['type2_return_after_365days'] = 0
 g.loc[mask, 'type2_return_after_365days'] = 1
-g.loc[mask, 'days_to_return'] = 366
-
-# Add death date
-demo = pd.read_parquet(data_path / 'demographics')
-death = demo[['patient_id', 'death_date']].drop_duplicates()
-shape0 = g.shape[0]
-g = g.merge(death, how='left')
-assert g.shape[0] == shape0
 
 # Get overall censoring indicator and return indicator
 g.days_to_return.isna().sum()
 g.days_to_return.isna().mean()
 g['censored'] = g.days_to_return.isna().astype(int)
 g['fit_return'] = (1 - g.censored).astype(int)
-
 print(g.loc[g.return_type != 'kit_from_another_icen'].days_to_return.max())
 
-# For censored tests, set days_to_return as days to datacut (if no death), or days to death (if death)
-print(g.days_to_return.max())
-g['days_to_death'] = None
-mask = ~g.death_date.isna()
-g.loc[mask, 'days_to_death'] = (pd.to_datetime(g.loc[mask, 'death_date']) - g.loc[mask, 'fit_request_date_corrected']).dt.days
-
-mask = (g.censored == 1) & (~g.death_date.isna())
-print(mask.sum())  # 922
-g.loc[mask, 'days_to_return'] = g.loc[mask, 'days_to_death']
-
-mask = (g.censored == 1) & (g.death_date.isna())
-print(mask.sum())  #9164
+# For censored tests, set days_to_return fit_request_date_fu
+mask = g.censored == 1
+print(mask.sum())  # 10.086
 g.loc[mask, 'days_to_return'] = g.loc[mask, 'fit_request_date_fu']
 
+# Drop patients with negative fit_request_date_fu (due to random date shifts)
+mask = g.fit_request_date_fu < 0
+mask.sum()                              # 2,480 reqs
+g.loc[mask].patient_id.nunique()        # 2,375 patients
+g.loc[mask].fit_request_date_corrected.describe()
+g = g.loc[~mask]
+test = g.days_to_return < 0
 assert (g.days_to_return >= 0).all()
 
-# Given that we consider max 365 day fu (longer returns excluded), set max censored days to return to 365
-g.loc[(g.censored == 1) & (g.days_to_return > 365), 'days_to_return'] = 365
+# Given that we consider max 365 day fu, clip days to return to 366 days
+# so 365-day indicators can still be computed, but survival times post 365 are set to 366
+# also set event indicator at >365 days to zero as administrative censoring (e.g. to avoid artificial KM curve drops at point 366)
+g.loc[g.days_to_return > 365, 'days_to_return'] = 366
+g.days_to_return.describe()
+mask = (g.days_to_return == 366) & (g.censored == 0)
+mask.sum()
+g.loc[mask, 'censored'] = 1
+g.loc[mask, 'fit_return'] = 0
 
 # Get type 1 return, where tests under another request number are not considered
 g['days_to_return_type1'] = (g.fit_date_received - g.fit_request_date_corrected).dt.days
@@ -439,18 +410,16 @@ g.loc[mask, 'days_to_return_type1'] = np.nan
 g['censored_type1'] = g.days_to_return_type1.isna().astype(int)
 g['fit_return_type1'] = (1 - g.censored_type1).astype(int)
 
-mask = (g.censored_type1 == 1) & (~g.death_date.isna())
-print(mask.sum())  # 1223
-g.loc[mask, 'days_to_return_type1'] = g.loc[mask, 'days_to_death']
-
-mask = (g.censored_type1 == 1) & (g.death_date.isna())
-print(mask.sum())  #12823
+mask = g.censored_type1 == 1
+print(mask.sum())  #13,419
 g.loc[mask, 'days_to_return_type1'] = g.loc[mask, 'fit_request_date_fu']
 
-g.loc[(g.censored_type1 == 1) & (g.days_to_return_type1 > 365), 'days_to_return_type1'] = 365
+g.loc[(g.days_to_return_type1 > 365), 'days_to_return_type1'] = 366
 assert (g.days_to_return_type1 >= 0).all()
 print(g.fit_return.mean(), g.fit_return_type1.mean())
 
+test = (g.days_to_return_type1 > 365) & (g.censored_type1 == 0)
+assert test.sum() == 0
 assert g.patient_id.isna().sum() == 0
 
 # Get nonreturn indicators. E.g. if d = 70, then 
@@ -476,18 +445,19 @@ for d in days:
 
 # Explore: how many requests were made where a patient died before 70 day return?
 test = (g.censored == 1) & (g.days_to_death < 70)
-print(test.sum())
+print(test.sum())  # 159
 
 test = (g.censored_type1 == 1) & (g.days_to_death < 70)
-print(test.sum())
+print(test.sum())  # 178
 
 # Dbl check multiple requests occuring on the same day
 #  For 72 patients, requests occur on the same day with dif request number
 #  However, their return status is always the same (not returned or returned), and days_to_return as well
 #  It is therefore fine to just randomly select one among those
 mask = g[['patient_id', 'fit_request_date_corrected']].duplicated(keep=False)
-mask.sum()  # 144 rows
-g.loc[mask].patient_id.nunique()  # 72 patients
+mask.sum()  # 142 rows
+g.loc[mask].patient_id.nunique()  # 71 patients
+shape0 = g.shape[0]
 gsub = g.loc[mask]
 test = gsub.groupby(['patient_id', 'fit_request_date_corrected'])['fit_return'].nunique()
 assert test.min() == 1
@@ -495,7 +465,7 @@ test = gsub.groupby(['patient_id', 'fit_request_date_corrected'])['days_to_retur
 assert test.min() == 1
 
 assert gsub.icen.isna().sum() == 0
-gsub_select = gsub.groupby(['patient_id', 'fit_request_date_corrected']).first() # 72 rows
+gsub_select = gsub.groupby(['patient_id', 'fit_request_date_corrected']).first() # 71 rows
 gsub_select = gsub_select.reset_index()
 
 print(g.shape)
@@ -505,7 +475,12 @@ print(g.shape)
 
 assert g.patient_id.isna().sum() == 0
 assert g.icen.nunique() == g.shape[0]
-assert g.shape[0] + 323 + 36 + (144 - 72) == gpreqs.shape[0]
+assert (g.shape[0] + 
+        323 +       # fit date received before request date
+        36 +        # type 1 return > 365 days
+        2480 +      # negative day to fu due to date shift
+        (142 - 71)  # duplicate request
+        == gpreqs.shape[0])
 
 #endregion
 
@@ -541,13 +516,13 @@ g.groupby('imd_quintile').index_of_multiple_deprivation.unique()
 g['birth_date_approx'] = pd.to_datetime(g.year_of_birth.astype(str) + '-' + g.month_of_birth.astype(str) + '-01')
 g['age_at_request'] = (g.fit_request_date_corrected - g.birth_date_approx).dt.days / 365
 assert not g.age_at_request.isna().any()
-i = g.loc[g.age_at_request < 18].icen  # 214 requests
+i = g.loc[g.age_at_request < 18].icen  # 206 requests
 g.loc[g.icen.isin(i)].patient_id.nunique()  # 203 patients
 g = g.loc[~g.icen.isin(i)]
 icen_rm = pd.concat(objs=[icen_rm, i], axis=1).drop_duplicates()
-assert g.shape[0] + 323 + 36 + (144 - 72) + 214 == gpreqs.shape[0]
+assert g.shape[0] + 323 + 36 + 2480 + (142 - 71) + 206 == gpreqs.shape[0]
 
-##  Total num removed: 645 (0.68%)
+##  Total num removed: 3,116 (3.3%)
 num_rm = gpreqs.shape[0] - g.shape[0]
 num_rm / gpreqs.shape[0] * 100
 
@@ -621,13 +596,14 @@ print(g.age_group.unique())
 #region
 
 # Get first request per patient
-g = g.sort_values(by=['patient_id', 'fit_request_date_corrected'])
+g    = g.sort_values(by=['patient_id', 'fit_request_date_corrected'])
 gsub = g.groupby('patient_id').first().reset_index()
 assert gsub.patient_id.nunique() == gsub.shape[0]
 gsub.nonret1_days70.mean()
 gsub.nonret2_days70.mean()
+print(g.shape[0] - gsub.shape[0])  # 22,311 reqs
 
-# Dbl check how many patients have multiple requests at the same date
+# Dbl check how many patients have multiple requests at the same date (none)
 mask = g[['patient_id', 'fit_request_date_corrected']].duplicated(keep=False)
 mask.sum()
 s = g.loc[mask]
@@ -647,60 +623,27 @@ g = g.reset_index(drop=True)
 gsub = gsub.reset_index(drop=True)
 
 # Assign most recent 10% of patients with 70-day fu as the test set 
-#
-# The code performed test set assignment not exactly as intended:
-# the test set turned out to be 10.3% not 10% of most recent patients with 70 day follow-up.
-# This is not really an issue, but this comment explains how this came about.
-#
-#  1) The number of patients to be assigned to the test set was computed as
-#     10% of all valid patients (7156: 10% of gsub.shape[0] of 71,560),
-#     whether or not they had a 70-day follow-up.
-#     This was unintended -> the number was meant to be computed among those with fu.
-#  2) Then, the 7156 patients with most recent test requests 
-#     were selected among those who had at least 70 days until data extraction date.
-#     Note that most patients with at least 70 days until data extraction date
-#     do have 70-day follow-up, but a small proportion do not because of death:
-#     i.e. they died without returning their test before 70 days passed.
-#     The variable 'fit_request_date_fu' only encompasses the "at least 70 days until data extraction criterion".
-#  3) The final number in the test set is thus 7,147,because some patients with 70 days until data extraction date died
-#     without returning their test in 70 days, so they were excluded due to lack of follow-up.
-#
-# Overall, 69,240 patients had full 70-day follow up,
-# so 7,147 of these patients with most recent requests amounts to 7,147 / 69,240 = 0.103 (10.3%)
-# and so the original goal of having a 10% test set was still met.
-# 
-# If this code was to be run again, it could be made clearer by
-#  Fully isolating patients with 70-day follow-up, i.e.
-#    1) those who have at least 70 days until data extraction date (fit_request_fu >= 70)
-#    2) AND those who did not die within 70 days after FIT request without returning their test.
-#  And then computing 10% of that patient set and selecting 10% most recent from there.
 gsub = gsub.sort_values(by=['fit_request_date_corrected'])
 assert (gsub.loc[gsub.fit_request_date_fu < 70].index == gsub.loc[gsub.nonret1_days70.isna()].index).all()
 gsubsub = gsub.loc[gsub.fit_request_date_fu >= 70]
 gsubsub['test_set'] = 0
-ntest = int(np.round(0.1 * gsub.shape[0]))
+ntest = int(np.round(0.1 * gsubsub.shape[0]))
 gsubsub.loc[gsubsub.iloc[-ntest:].index, 'test_set'] = 1
 assert gsubsub.test_set.sum() == ntest
 gsubsub.groupby('test_set').fit_request_date_corrected.describe()
 gsubsub.groupby('test_set').nonret1_days70.sum()
 gsubsub.groupby('test_set').size()
-gsubsub.test_set.mean()  # 10.3%
-gsubsub.shape[0] * 0.1
-gsub.shape[0] * 0.1
+gsubsub.test_set.mean()
 gsubsub.test_set.sum()
-(gsubsub.test_set == 0).mean()  # 89.7%
+gsubsub.shape[0] * 0.1
+(gsubsub.test_set == 0).mean()
 
-## Note - not considering deaths before fu atm, but if doing so, only 116 rows, won't affect the first decimal place
+# Check: patients with death within 70-day fu are indeed excluded
 mask_death = (gsubsub.censored == 1) & (~gsubsub.days_to_death.isna()) & (gsubsub.days_to_death <= 70)
 mask_death.sum()
-t = gsubsub.loc[~mask_death]
-t.shape[0]
-t.test_set.mean()
-(t.test_set==0).mean()  # 89.7%
 
-
-# (And also treat most patients with less than 70 day fu as test set, even though
-# they won't appear in the logistic analysis)
+# Treat patients with less than 70 day fu as test set, even though they won't appear in the logistic analysis
+# gsub contains one request per patient, but not filtered in terms of follow-up
 gsub['test_set'] = 0
 gsub.loc[gsub.patient_id.isin(gsubsub.loc[gsubsub.test_set==1].patient_id), 'test_set'] = 1
 assert gsub.test_set.sum() == gsubsub.test_set.sum()
@@ -710,7 +653,7 @@ gsubsub.test_set.sum()
 gsub.test_set.mean()
 gsub.loc[gsub.fit_request_date_fu >= 70].test_set.mean()
 
-# Propagate the test set indicator the full requests table as well
+# Propagate the test set indicator the full requests table based on patient id (multiple requests per patient)
 g['test_set'] = 0
 g.loc[g.patient_id.isin(gsub.loc[gsub.test_set == 1].patient_id), 'test_set'] = 1
 g.test_set.mean()
@@ -718,45 +661,33 @@ g.test_set.mean()
 # Save
 out_path = Path(r'Z:\fit_nonreturn_paper_20250417\data')
 out_path.mkdir(exist_ok=True)
-g.to_csv(out_path / 'fit_nonret.csv', index=False)
-gsub.to_csv(out_path / 'first_fit_nonret.csv', index=False)
+g.to_csv(out_path / 'fit_nonret_fixed.csv', index=False)
+gsub.to_csv(out_path / 'first_fit_nonret_fixed.csv', index=False)
 
 
+#--------------------------------------------------------------------------------
 # Check number of requests per patient
 s = g.groupby('patient_id').icen.nunique().value_counts(normalize=True) * 100
 s
 
-g2 = g.loc[g.patient_id.duplicated(keep=False)].sort_values(by=['patient_id', 'fit_request_date_corrected'])
-g2['dshift'] = g2.fit_request_date_corrected.shift(-1)
-g2 = g2[['patient_id', 'icen', 'fit_request_date_corrected', 'dshift']]
-g2['delta'] = (g2.dshift - g2.fit_request_date_corrected).dt.days
-s2 = g2.groupby('patient_id').first()
-s2.delta.describe(percentiles=[0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99])
-
-
-# Time between first and second request
-np.mean(s2.delta <= 28)
-np.mean(s2.delta <= 70)
-np.mean(s2.delta >= 180)
-np.mean(s2.delta >= 365)
-
+#--------------------------------------------------------------------------------
 # Explore approx number of GP practices 
 out_path = Path(r'Z:\fit_nonreturn_paper_20250417\data')
-df = pd.read_csv(out_path / 'first_fit_nonret.csv')
+df = pd.read_csv(out_path / 'first_fit_nonret_fixed.csv')
 assert not df.gp.isna().any()
 n = df.gp.value_counts()
 n.describe(percentiles=[0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99])
 df.gp.nunique()
 
+#--------------------------------------------------------------------------------
 # Check num deaths within 70 days after first request
 s = gsub.loc[(~gsub.days_to_death.isna()) & (gsub.days_to_death <= 70) & (gsub.censored == 1)]
-n_death = s.patient_id.nunique()  #122
-n_death / gsub.shape[0] * 100
+n_death = s.patient_id.nunique()  # 113
+n_death / gsub.shape[0] * 100     # 0.16%
 
-36 / (gsub.shape[0] + 36)  # percent of patients with request >365
-
-
-gsub['fit_request_year'] = gsub.fit_request_date_corrected.dt.year
-gsub.groupby('fit_request_year').size()
+#--------------------------------------------------------------------------------
+s = gsub.loc[gsub.fit_request_date_fu >= 70]
+s.groupby('request_year').size()
+## the small dif in num requests in 2017 comes as the new code excludes death < 70 days; old excluded <= 70.
 
 #endregion

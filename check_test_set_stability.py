@@ -7,10 +7,9 @@ fit an unpenalised logistic model (sklearn) with the same dummy coding as
 models.R, and overlay the resulting curves - one line per test fold - so the
 split-to-split variation is visible.
 
-The number of CV repetitions is an argument (default 1); with the default,
-the 10 folds already give 10 overlaid curves.
-
-This script was generated with Claude Code and manually verified.
+This script was created with Claude Code to speed up the process,
+using other scripts in the repository as a blueprint.
+It was manually checked to be valid.
 """
 
 import matplotlib.pyplot as plt
@@ -22,27 +21,25 @@ from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.metrics import precision_recall_curve, roc_auc_score, average_precision_score
 
 
-# ---- Settings ----
 data_path = Path(r'Z:\fit_nonreturn_paper_20250417\data')
-out_path = Path(r'Z:\fit_nonreturn_paper_20250417\results')
+out_path = Path(r'Z:\fit_nonreturn_paper_20250417\results_fixed')
 out_path.mkdir(exist_ok=True)
 
-outcome = 'nonret2_days70'   # 70-day non-return, type 2 (as in plots.py logistic panel)
+outcome = 'nonret2_days70'   # 70-day non-return, type 2
 n_splits = 10                # 10-fold CV -> 10% test sets
 random_state = 0
-n_repeats = 1                # Number of times the 10-fold CV is repeated
+n_repeats = 10               # Number of repeats for 10-fold CV
 
 
-# ---- 1. Select dataset (patients with 70-day follow-up), as in models.R ----
-df = pd.read_csv(data_path / 'first_fit_nonret.csv')
-print('Loaded:', df.shape)
+# ---- 1. Read data and subset to patients with 70-day fu ----
+df = pd.read_csv(data_path / 'first_fit_nonret_fixed.csv')
+print(df.shape)
 
-# Keep patients with at least 70-day follow-up (models.R section 1)
+# Keep patients with at least 70-day follow-up
 df = df.loc[df.fit_request_date_fu >= 70]
 
 # Drop patients who died before 70-day follow-up without returning a test
-#  (models.R section 1 / tables.py; days_to_death is NaN for non-deaths, so the
-#   comparison is False for them and they are kept)
+# Note: this is for compatibility with older code; the fit_request_date_fu already drops them
 df = df.loc[~((df.days_to_death <= 70) & (df.censored == 1))]
 
 df = df.reset_index(drop=True)
@@ -50,15 +47,10 @@ print('Analysis set:', df.shape)
 assert df[outcome].isna().sum() == 0, 'Outcome should be fully observed at 70-day fu'
 
 
-# ---- 2. Build design matrix with the same dummy coding as models.R ----
-# models.R references (dropped level): age_group=18-39, ethnicity=White,
-# imd_quintile_factor=5 (NA -> 'Not known'), request_year_factor=2017,
-# request_month_factor=1. gender_male is already a 0/1 indicator.
-# prefix_sep='' reproduces the R coefficient names (e.g. 'age_group40-49').
+# ---- 2. Build design matrix with the same dummy coding as in models.R ----
 def build_design(data):
     d = data.copy()
 
-    # IMD quintile: missing -> 'Not known', numeric -> integer string
     d['imd_quintile_str'] = d['imd_quintile'].map(
         lambda x: 'Not known' if pd.isna(x) else str(int(round(x))))
     d['request_year_str'] = d['request_year'].astype(int).astype(str)
@@ -77,7 +69,7 @@ def build_design(data):
         dummies = pd.get_dummies(d[col].astype(str), prefix=prefix, prefix_sep='')
         ref_col = prefix + ref
         assert ref_col in dummies.columns, f'Reference level {ref_col} not found'
-        dummies = dummies.drop(columns=[ref_col])   # drop reference (treatment coding)
+        dummies = dummies.drop(columns=[ref_col])  # drop reference level (the reference level is implicit in logistic regression)
         blocks.append(dummies.astype(float))
 
     X = pd.concat(blocks, axis=1)
@@ -91,9 +83,9 @@ print('Design matrix:', X.shape)
 print('Overall non-return rate:', round(y.mean() * 100, 2), '%')
 
 
-# ---- 3. Curve helper (mirrors summarise_performance in plots.py) ----
+# ---- 3. Helper function for curve data (mirrors summarise_performance in plots.py) ----
 def pr_positivity(y_true, y_pred):
-    """Return recall(%), precision(%), and percent-predicted-positive(%),
+    """Return recall (%), precision (%), and percent-predicted-positive (%),
     plus AUC, average precision and prevalence, for one test set."""
     precision, recall, thr = precision_recall_curve(y_true, y_pred)
 
@@ -175,20 +167,18 @@ fig, ax = plt.subplots(1, 2, figsize=(9, 5), tight_layout=True)
 ax = ax.flatten()
 
 for j, c in enumerate(curves):
-    # All fold/repeat curves share one colour and a single legend entry, so the
-    # figure shows the overall spread rather than distinguishing repeats.
-    label = 'CV test folds' if j == 0 else None
+    # Curves for all data splits share the same colour
+    # We label them only once to avoid repeating the label across splits
+    label = 'CV test folds' if j == 0 else None 
 
-    # Panel A: precision-recall (drop the very-low-recall noise, as in plots.py)
+    # Panel A: precision-recall (plot from recall > 1% as below that there is more noise)
     mask = c['recall'] > 1  # recall > 0.01
-    ax[0].plot(c['recall'][mask], c['precision'][mask],
-               color='C0', alpha=0.4, linewidth=1, label=label)
+    ax[0].plot(c['recall'][mask], c['precision'][mask], color='C0', alpha=0.4, linewidth=1, label=label)
 
     # Panel B: positivity curve (percent testing positive vs sensitivity)
-    ax[1].plot(c['recall'], c['ppos'],
-               color='C0', alpha=0.4, linewidth=1, label=label)
+    ax[1].plot(c['recall'], c['ppos'], color='C0', alpha=0.4, linewidth=1, label=label)
 
-# Panel A cosmetics
+# Panel A design
 ax[0].grid(alpha=0.5)
 ax[0].set_xticks(np.arange(0, 110, 10))
 ax[0].set_yticks(np.arange(0, 110, 10))
@@ -198,7 +188,7 @@ ax[0].set(xlim=(-5, 105), ylim=(-5, 105),
 ax[0].set_title('A. Precision-recall curves across test folds')
 ax[0].legend(frameon=False, fontsize=8)
 
-# Panel B cosmetics + reference lines (perfect / random), using overall prevalence
+# Panel B design + reference lines (perfect / random), using overall prevalence
 ax[1].plot([0, 100], [0, prev_overall * 100], linestyle='solid', color='C1',
            label='Perfect performance')
 ax[1].plot([0, 100], [0, 100], linestyle='dashed', color='red',
