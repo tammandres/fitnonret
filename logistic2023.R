@@ -27,8 +27,6 @@ data_split <- TRUE
 
 
 # ---- 1. Read and prepare data ----
-# Uses first_fit_nonret.csv (one row per patient), matching the main
-# logistic analysis in models.R section 2.
 df <- read_csv("Z:/fit_nonreturn_paper_20250417/data/first_fit_nonret_fixed.csv")
 nrow(df)
 
@@ -54,10 +52,6 @@ df$request_month_factor <- relevel(df$request_month_factor, ref = '1')
 nrow(df)
 df <- df[df$fit_request_date_fu >= 70, ]
 nrow(df)
-
-# Check no death within fu
-mask <- (df$censored == 1) & (!is.na(df$days_to_death)) & (df$days_to_death <= 70)
-sum(mask) == 0
 
 # Guard: outcome should be fully observed in this population
 stopifnot(sum(is.na(df$nonret2_days70)) == 0)
@@ -97,9 +91,9 @@ fit_and_extract <- function(data, incl_request_year=TRUE) {
   or_low <- round(exp(est - 1.96 * se), 2)
   or_upp <- round(exp(est + 1.96 * se), 2)
   or_ci  <- paste0("(", 
-                   format(or_low, nsmall=2, scientific=FALSE), 
+                   format(or_low, nsmall=2, scientific=FALSE, trim=TRUE), 
                    ", ", 
-                   format(or_upp, nsmall=2, scientific=FALSE), 
+                   format(or_upp, nsmall=2, scientific=FALSE, trim=TRUE), 
                    ")", 
                    sep="")
   
@@ -109,7 +103,7 @@ fit_and_extract <- function(data, incl_request_year=TRUE) {
   or_pval[pval < 0.001] <- "<0.001"
   
   res <- data.frame(variable = tab$variable,
-                    or = format(or, nsmall=2, scientific=FALSE),
+                    or = format(or, nsmall=2, scientific=FALSE, trim=TRUE),
                     or_ci = or_ci,
                     or_pval = or_pval,
                     stringsAsFactors = FALSE)

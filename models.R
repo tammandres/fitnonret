@@ -18,7 +18,6 @@ out_path <- "Z:/fit_nonreturn_paper_20250417/results_fixed"
 dir.create(file.path(out_path), showWarnings = FALSE)
 
 run_on_imputed_data <- FALSE
-run_cox <- FALSE
 
 # ---- 1. Read and prepare data ----
 
@@ -66,11 +65,6 @@ n1 <- nrow(df)
 sum(is.na(df$nonret2_days70))
 sum(is.na(df$nonret2_days14))
 
-# Drop patients who died before 70-day follow-up without returning a test (116)
-# Note: these are already dropped, this bit just checks this is the case
-mask <- (df$censored == 1) & (!is.na(df$days_to_death)) & (df$days_to_death <= 70)
-sum(mask) == 0
-
 # Train test split
 df_train <- df[df$test_set == 0,]
 df_test <- df[df$test_set == 1,]
@@ -114,9 +108,9 @@ for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonre
   or_low <- round(exp(est - 1.96 * se), 2)
   or_upp <- round(exp(est + 1.96 * se), 2)
   or_ci  <- paste0("(", 
-                   format(or_low, nsmall=2, scientific=FALSE), 
+                   format(or_low, nsmall=2, scientific=FALSE, trim=TRUE), 
                    ", ", 
-                   format(or_upp, nsmall=2, scientific=FALSE), 
+                   format(or_upp, nsmall=2, scientific=FALSE, trim=TRUE), 
                    ")", 
                    sep="")
   
@@ -126,7 +120,7 @@ for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonre
   or_pval[pval < 0.001] <- "<0.001"
   
   tab_logistic <- data.frame(variable = tab$variable,
-                             or = format(or, nsmall=2, scientific=FALSE),
+                             or = format(or, nsmall=2, scientific=FALSE, trim=TRUE),
                              or_ci = or_ci,
                              or_pval = or_pval,
                              outcome = outcome_col,
@@ -200,7 +194,7 @@ for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonre
                  gender_male = 0, 
                  ethnicity='White', 
                  imd_quintile=median(df$imd_quintile, na.rm=TRUE),
-                 request_year=2024,
+                 request_year=2023,  # last year in the data with 70-day follow-up (avoids extrapolation)
                  request_month=1)
   
   ## Create a dataframe that contains a grid of values for the variable to be plotted
@@ -269,9 +263,10 @@ for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonre
   tab_lin$`P value sig`[tab_lin$`P value` < 0.01] <- '**'
   tab_lin$`P value sig`[tab_lin$`P value` < 0.001] <- '***'
   
-  tab_lin$`P value` <- round(tab_lin$`P value`, 4)
-  tab_lin$`P value`[tab_lin$`P value` == 0] <- '<0.001'
-  tab_lin$`P value`[tab_lin$`P value` == 1e-4] <- '0.001'
+  # p value: round to 3 dp, floor small values to <0.001 (as in logistic tables)
+  pv <- tab_lin$`P value`
+  tab_lin$`P value` <- format(round(pv, 3), nsmall = 3, scientific = FALSE, trim = TRUE)
+  tab_lin$`P value`[pv < 0.001] <- '<0.001'
   tab_lin$outcome <- outcome_col
   
   print(tab_lin)
@@ -284,9 +279,10 @@ for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonre
   tab_smooth$`P value sig`[tab_smooth$`P value` < 0.05] <- '*'
   tab_smooth$`P value sig`[tab_smooth$`P value` < 0.01] <- '**'
   tab_smooth$`P value sig`[tab_smooth$`P value` < 0.001] <- '***'
-  tab_smooth$`P value` <- round(tab_smooth$`P value`, 4)
-  tab_smooth$`P value`[tab_smooth$`P value` == 0] <- '<0.001'
-  tab_smooth$`P value`[tab_smooth$`P value` == 1e-4] <- '0.001'
+  # p value: round to 3 dp, floor small values to <0.001 (as in logistic tables)
+  pv <- tab_smooth$`P value`
+  tab_smooth$`P value` <- format(round(pv, 3), nsmall = 3, scientific = FALSE, trim = TRUE)
+  tab_smooth$`P value`[pv < 0.001] <- '<0.001'
   rownames(tab_smooth) <- NULL
   tab_smooth$outcome <- outcome_col
   
@@ -315,254 +311,7 @@ write.csv(plot_gam_response, file.path(out_path, 'gam-plot_resp.csv'), row.names
 write.csv(pred_gam, file.path(out_path, 'gam-pred.csv'), row.names=FALSE)
 
 
-# ---- 4. Cox models (analysing type 1 and type 2 nonreturn separately) ----
-if(run_cox){
-
-# Train test split
-df_full_train <- df_full[df_full$test_set == 0,]
-df_full_test <- df_full[df_full$test_set == 1,]
-
-nrow(df_full_train)  ## 62,200
-nrow(df_full_test)   ## 9,360
-0.9 * nrow(df_full)
-
-# Result containers
-return_time <- data.frame()
-km_curve <- data.frame()
-km_curve_grouped <- data.frame()
-km_curve_return_grouped <- data.frame()
-coef_cox <- data.frame()
-pred_cox <- data.frame()
-
-
-# Time to event analysis (type 2 and type 1)
-for(out_col in c('days_to_return', 'days_to_return_type1')){
-  
-  if(out_col == 'days_to_return'){
-    return_col <- 'fit_return'
-    return_type <- 2
-    } else {
-    return_col <- 'fit_return_type1'
-    return_type <- 1
-  }
-  
-  # Analyse time to return for those who returned the test 
-  t <- df_full_train[df_full_train[return_col] == 1,]
-  t <- t[[out_col]]
-  times <-  c(seq(1, 180, 1)) #, max(t))
-  perc <- c()
-  nret <- c()
-  for(time in times){
-    perc <- c(perc, mean(t <= time) * 100)
-    nret <- c(nret, sum(t <= time))
-  }
-  df_perc <- data.frame(time=times, perc=perc, nret=nret)
-  df_perc$return_type <- return_type
-  df_perc$perc <- round(df_perc$perc, 2)
-  return_time <- rbind(return_time, df_perc)
-  
-  test <- sum(t > 180)
-  print(test)
-  if(test < 10){
-    break
-  }
-  
-  # KM curve
-  f <- paste('Surv(df_full_train$', out_col, ', df_full_train$', return_col, ') ~ 1', sep='')
-  s <- survfit(as.formula(f), data = df_full_train)
-  
-  df_km <- data.frame(time=s$time, surv=s$surv, std_err=s$std.err, cumhaz=s$cumhaz,
-                      std_chaz=s$std.chaz, surv_low=s$lower, surv_upp=s$upper,
-                      n_event=s$n.event, n_risk=s$n.risk, n=s$n, n_censor=s$n.censor)
-  
-  # Compute conditional probabilities of return
-  s14 <- df_km[df_km$time == 14, 'surv']
-  s28 <- df_km[df_km$time == 28, 'surv']
-  s70 <- df_km[df_km$time == 70, 'surv']
-  smax <- df_km[which.max(df_km$time), 'surv']
-  
-  df_km$p14 <- 1 - s14 / df_km$surv
-  df_km$p28 <- 1 - s28 / df_km$surv
-  df_km$p70 <- 1 - s70 / df_km$surv
-  df_km$pmax <- 1 - smax / df_km$surv
-  
-  df_km$p14[df_km$time > 14] <- NA
-  df_km$p28[df_km$time > 28] <- NA
-  df_km$p70[df_km$time > 70] <- NA
-  df_km$return_type <- return_type
-  
-  # Sanity check of conditional probabilities
-  print(df_km[df_km$time == 14, 'p28'])
-  
-  df_sub <- df_full_train[df_full_train$days_to_return > 14, 
-                          c('days_to_return', 'fit_request_date_fu', 'fit_return')]
-  df_sub <- df_sub[df_sub$fit_request_date_fu >= 28,]
-  print(nrow(df_sub))
-  mask <- (df_sub$days_to_return <= 28) & (df_sub$fit_return == 1) 
-  mean(mask)
-  mean(df_sub$fit_return)
-  
-  df_sub <- df_full_train[df_full_train$days_to_return_type1 > 14, 
-                          c('days_to_return_type1', 'fit_request_date_fu', 'fit_return_type1')]
-  df_sub <- df_sub[df_sub$fit_request_date_fu >= 28,]
-  print(nrow(df_sub))
-  mask <- (df_sub$days_to_return_type1 <= 28) & (df_sub$fit_return_type1 == 1) 
-  mean(mask)
-  mean(df_sub$fit_return_type1)
-  
-  sum(df_full_train$fit_return)
-  mean(df_full_train$fit_return)
-  
-  sum(df_full_train$fit_return_type1)
-  mean(df_full_train$fit_return_type1)
-  
-  df_ret <- df_full_train[df_full_train$fit_return_type1 == 1, c('days_to_return_type1', 'fit_request_date_fu')]
-  sum(df_ret$days_to_return_type1 > 14)
-  nrow(df_ret)
-  
-  # Sanity check of KM curves
-  p <- ggplot(data=df_km)
-  p <- p + geom_line(aes(x=time, y=p70), color='red')
-  p <- p + geom_line(aes(x=time, y=p28), color='green')
-  p <- p + geom_line(aes(x=time, y=p14), color='blue')
-  p <- p + geom_line(aes(x=time, y=pmax), color='orange')
-  p <- p + xlim(0, 70)
-  p <- p + scale_y_continuous(breaks = seq(0, 1, 0.1), limits=c(0, 1))
-  p <- p + ylab("Probability of returning the test within 70 days\nif not yet returned")
-  p <- p + xlab("Days from FIT test request")
-  p
-  
-  p <- ggplot(data=df_km)
-  p <- p + geom_line(aes(x=time, y=surv), color='red')
-  p <- p + xlim(0, 70)
-  p <- p + scale_y_continuous(breaks = seq(0, 1, 0.1), limits=c(0, 1))
-  p <- p + ylab("Probability of returning the test after t days")
-  p <- p + xlab("Days from FIT test request")
-  p
-  
-  km_curve <- rbind(km_curve, df_km)
-  
-  # KM curves by gender, age, ethnicity and deprivation
-  df_km_grouped <- data.frame()
-  for(var in c('gender_male', 'age_group', 'ethnicity', 'imd_quintile_factor')){
-    values <- unique(df[[var]])
-    for(val in values){
-      print(paste(var, val))
-      dfsub <- df_full_train[df_full_train[[var]] == val,]
-      f <- paste('Surv(dfsub$', out_col, ', dfsub$', return_col, ') ~ 1', sep='')
-      s <- survfit(as.formula(f), data = dfsub)
-      df_km <- data.frame(time=s$time, surv=s$surv, std_err=s$std.err, cumhaz=s$cumhaz,
-                          std_chaz=s$std.chaz, surv_low=s$lower, surv_upp=s$upper,
-                          n_event=s$n.event, n_risk=s$n.risk, n=s$n, n_censor=s$n.censor)
-      df_km$variable <- var
-      df_km$value <- val
-      df_km_grouped = rbind(df_km_grouped, df_km)
-    }
-  }
-  df_km_grouped$st <- 1 - df_km_grouped$surv
-  df_km_grouped$return_type <- return_type
-  km_curve_grouped <- rbind(km_curve_grouped, df_km_grouped)
-  
-  p <- ggplot(data=df_km_grouped) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70) + facet_wrap(vars(variable))
-  p <- ggplot(data=df_km_grouped[df_km_grouped$variable=='age_group',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
-  p <- ggplot(data=df_km_grouped[df_km_grouped$variable=='ethnicity',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
-  p <- ggplot(data=df_km_grouped[df_km_grouped$variable=='imd_quintile_factor',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
-  
-  # KM curves only for those who return test: by gender, age, ethnicity, and deprivation
-  df_km_grouped_return <- data.frame()
-  for(var in c('gender_male', 'age_group', 'ethnicity', 'imd_quintile_factor')){
-    values <- unique(df[[var]])
-    for(val in values){
-      print(paste(var, val))
-      dfsub <- df_full_train[df_full_train[[var]] == val,]
-      dfsub <- dfsub[dfsub[[return_col]] == 1,]
-      f <- paste('Surv(dfsub$', out_col, ', dfsub$', return_col, ') ~ 1', sep='')
-      s <- survfit(as.formula(f), data = dfsub)
-      df_km <- data.frame(time=s$time, surv=s$surv, std_err=s$std.err, cumhaz=s$cumhaz,
-                          std_chaz=s$std.chaz, surv_low=s$lower, surv_upp=s$upper,
-                          n_event=s$n.event, n_risk=s$n.risk, n=s$n, n_censor=s$n.censor)
-      df_km$variable <- var
-      df_km$value <- val
-      df_km_grouped_return = rbind(df_km_grouped_return, df_km)
-    }
-  }
-  df_km_grouped_return$st <- 1 - df_km_grouped_return$surv
-  df_km_grouped_return$return_type <- return_type
-  km_curve_return_grouped <- rbind(km_curve_return_grouped, df_km_grouped_return)
-  
-  p <- ggplot(data=df_km_grouped_return) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70) + facet_wrap(vars(variable))
-  p <- ggplot(data=df_km_grouped_return[df_km_grouped_return$var=='age_group',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
-  p <- ggplot(data=df_km_grouped_return[df_km_grouped_return$var=='ethnicity',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
-  p <- ggplot(data=df_km_grouped_return[df_km_grouped_return$var=='imd_quintile_factor',]) + geom_line(aes(x=time, y=st, color=value)) + xlim(0, 70)
-  
-  
-  # Cox model
-  f <- paste('Surv(df_full_train$', out_col, ', df_full_train$', return_col, ') ~  1 + gender_male + age_group + ethnicity + imd_quintile_factor + request_year_factor + request_month_factor', sep='')
-  fit_cox <- coxph(as.formula(f), data = df_full_train)
-  
-  tab_cox <- data.frame(coef(summary(fit_cox)))
-  tab_cox$Predictor <- rownames(tab_cox)
-  rownames(tab_cox) <- NULL
-  tab_cox <- tab_cox[,colnames(tab_cox) != 'exp.coef.']
-  tab_cox <- tab_cox[,c(5,1,2,3,4)]
-  tab_cox$HR <- round(exp(tab_cox$coef),2)
-  tab_cox$`HR low` <- round(exp(tab_cox$coef - 1.96 * tab_cox$se.coef.),2)
-  tab_cox$`HR upp` <- round(exp(tab_cox$coef + 1.96 * tab_cox$se.coef.),2)
-  tab_cox <- tab_cox[,c('Predictor', 'HR', 'HR low', 'HR upp', 'Pr...z..')]
-  colnames(tab_cox)[5] <- 'P value'
-  tab_cox$`P value sig` <- ''
-  tab_cox$`P value sig`[tab_cox$`P value` < 0.05] <- '*'
-  tab_cox$`P value sig`[tab_cox$`P value` < 0.01] <- '**'
-  tab_cox$`P value sig`[tab_cox$`P value` < 0.001] <- '***'
-  tab_cox$`P value` <- round(tab_cox$`P value`, 4)
-  tab_cox$`P value`[tab_cox$`P value` == 0] <- '<0.001'
-  tab_cox$`P value`[tab_cox$`P value` == 1e-4] <- '0.001'
-  print(tab_cox)
-  
-  tab_cox$return_type <- return_type
-  coef_cox <- rbind(coef_cox, tab_cox)
-  
-  # predict 14, 28 and 70 day return from cox model
-  pred <- df_full[,c('patient_id', 'icen', 'test_set')]
-
-  df_full_new <- df_full
-  df_full_new$request_year_factor[df_full_new$request_year_factor == 2024] <- 2023
-  lp <- predict(fit_cox, type='lp', newdata=df_full_new)
-  hazard_ratio <- exp(lp)
-  bhaz <- basehaz(fit_cox, centered=FALSE)
-  bhaz$base_surv <- exp(-bhaz$hazard)
-  
-  for(days in c(14, 28, 70)){
-    baseline_survival <- bhaz[bhaz$time == days,]$base_surv
-    p_nonreturn <- baseline_survival ^ hazard_ratio
-    pred$y_pred <- p_nonreturn
-    outcome_col <- paste('nonret', return_type, '_days', days, sep='')
-    pred$y_true <- df_full[[outcome_col]]
-    pred$outcome <- outcome_col
-    pred_cox <- rbind(pred_cox, pred)
-  }
-}
-pred_cox <- pred_cox[!is.na(pred_cox$y_true),]
-  
-write.csv(coef_cox, file.path(out_path, 'cox-coef.csv'), row.names=FALSE)
-write.csv(pred_cox, file.path(out_path, 'cox-pred.csv'), row.names=FALSE)
-write.csv(return_time, file.path(out_path, 'return_time.csv'), row.names=FALSE)
-write.csv(km_curve, file.path(out_path, 'km_curve.csv'), row.names=FALSE)
-write.csv(km_curve_grouped, file.path(out_path, 'km_curve_grouped.csv'), row.names=FALSE)
-write.csv(km_curve_return_grouped, file.path(out_path, 'km_curve_return_grouped.csv'), row.names=FALSE)
-
-
-# Sanity check
-p_logistic <- pred_logistic[,c('patient_id', 'icen', 'y_pred', 'outcome', 'test_set')]
-p_cox <- pred_cox[,c('patient_id', 'icen', 'y_pred', 'outcome')]
-colnames(p_cox)[3] <- 'y_pred_cox'
-p_join <- inner_join(p_logistic, p_cox, by=c('patient_id', 'icen', 'outcome'))
-p_sub <- p_join[p_join$outcome=='nonret1_days70',]
-p_sub <- p_sub[p_sub$test_set == 0,]
-plot(p_sub$y_pred, p_sub$y_pred_cox)
-}
-
-# ---- 5. Logistic models on imputed data ----
+# ---- 4. Logistic models on imputed data ----
 
 if(run_on_imputed_data){
     
@@ -619,9 +368,10 @@ if(run_on_imputed_data){
     tab_logistic$`P value sig`[tab_logistic$`P value` < 0.01] <- '**'
     tab_logistic$`P value sig`[tab_logistic$`P value` < 0.001] <- '***'
     
-    tab_logistic$`P value` <- round(tab_logistic$`P value`, 4)
-    tab_logistic$`P value`[tab_logistic$`P value` == 0] <- '<0.001'
-    tab_logistic$`P value`[tab_logistic$`P value` == 1e-4] <- '0.001'
+    # p value: round to 3 dp, floor small values to <0.001 (as in logistic tables)
+    pv <- tab_logistic$`P value`
+    tab_logistic$`P value` <- format(round(pv, 3), nsmall = 3, scientific = FALSE, trim = TRUE)
+    tab_logistic$`P value`[pv < 0.001] <- '<0.001'
     print(tab_logistic)
     
     pat <- 'relevel\\(factor\\(imd_quintile_factor, ordered = FALSE, levels = c\\("1", "2", "3", "4", "5"\\)\\), ref = "5"\\)'
@@ -633,132 +383,10 @@ if(run_on_imputed_data){
   write.csv(coef_logistic_imp, file.path(out_path, 'logistic-coef-imp.csv'), row.names=FALSE)
 }
 
-# ---- 6. Logistic models on full data (all requests) ----
 
-# Read data
-df <- read_csv("Z:/fit_nonreturn_paper_20250417/data/fit_nonret_fixed.csv")
-nrow(df)
+# ---- 5. KM curves and conditional probability curves without train-test split ----
 
-# IMD to factor
-df$imd_quintile_factor <- df$imd_quintile
-df$imd_quintile_factor[is.na(df$imd_quintile)] <- 'Not known'
-df$imd_quintile_factor <- factor(df$imd_quintile_factor)
-df$imd_quintile_factor <- relevel(df$imd_quintile_factor, ref='5')
-
-# Set White as reference
-df$ethnicity <- factor(df$ethnicity)
-df$ethnicity <- relevel(df$ethnicity, ref='White')
-
-# Set youngest age group as ref
-df$age_group <- factor(df$age_group)
-df$age_group <- relevel(df$age_group, ref='18-39')
-
-# Time to factor
-df$request_year_factor <- factor(df$request_year)
-df$request_year_factor <- relevel(df$request_year_factor, ref='2017')
-df$request_month_factor <- factor(df$request_month)
-df$request_month_factor <- relevel(df$request_month_factor, ref='1')
-
-# Use time with daily precision (more precision not needed)
-df$days_to_return <- round(df$days_to_return, digits=0)
-df$days_to_return_type1 <- round(df$days_to_return_type1, digits=0)
-
-# Drop patients without 70-day follow-up
-nrow(df)
-df <- df[df$fit_request_date_fu >= 70,]
-nrow(df)
-sum(is.na(df$nonret2_days70))
-sum(is.na(df$nonret2_days14))
-
-# Drop requests where patients died before 70-day follow-up without returning a test
-# Already dropped!
-mask <- (df$censored == 1) & (!is.na(df$days_to_death)) & (df$days_to_death <= 70)
-sum(mask) == 0
-nrow(df)
-df <- df[!mask,]
-nrow(df)
-
-# Train test split
-df_train <- df[df$test_set == 0,]
-df_test <- df[df$test_set == 1,]
-df_train <- df_train[,colnames(df_train) != 'test_set']
-
-# Dbl check that the few >365 returns are dropped
-max(df[df$fit_return_type1 == 1,]$days_to_return_type1)
-
-# Fit models
-coef_logistic_mult <- data.frame()
-pred_logistic_mult <- data.frame()
-
-for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonret2_days70',
-                     'nonret1_days7', 'nonret1_days14', 'nonret1_days28', 'nonret1_days70')){
-  print(outcome_col)
-  
-  # Fit simplest logistic model
-  formula = paste(outcome_col, "~ gender_male + age_group + ethnicity + imd_quintile_factor + request_year_factor + request_month_factor")
-  fit_logistic <- glm(as.formula(formula), data=df_train, family = binomial(link="logit"))
-  summary(fit_logistic)
-  
-  # Reformat the model summary
-  # Reformat the model summary
-  tab <- data.frame(coef(summary(fit_logistic)), check.names = FALSE)
-  tab$variable <- rownames(tab)
-  rownames(tab) <- NULL
-  
-  est <- tab$Estimate
-  se  <- tab$`Std. Error`
-  pval <- tab$`Pr(>|z|)`
-  
-  or     <- round(exp(est), 2)
-  or_low <- round(exp(est - 1.96 * se), 2)
-  or_upp <- round(exp(est + 1.96 * se), 2)
-  or_ci  <- paste0("(", 
-                   format(or_low, nsmall=2, scientific=FALSE), 
-                   ", ", 
-                   format(or_upp, nsmall=2, scientific=FALSE), 
-                   ")", 
-                   sep="")
-  
-  # p value: round to 3 dp, floor small values to <0.001
-  or_pval <- round(pval, 3)
-  or_pval <- format(or_pval, nsmall = 3, scientific = FALSE, trim = TRUE)
-  or_pval[pval < 0.001] <- "<0.001"
-  
-  tab_logistic <- data.frame(variable = tab$variable,
-                             or = format(or, nsmall=2, scientific=FALSE),
-                             or_ci = or_ci,
-                             or_pval = or_pval,
-                             outcome = outcome_col,
-                             stringsAsFactors = FALSE)
-  
-  coef_logistic_mult <- rbind(coef_logistic_mult, tab_logistic)
-  
-  # Create predictions on the held out test set
-  # What to do with year 2024 not in factor level?
-  df_new <- df
-  df_new$request_year_factor[df_new$request_year_factor == 2024] <- 2023
-  pred <- predict(fit_logistic, newdata=df_new, type='response')
-  pred <- data.frame(patient_id=df$patient_id, 
-                     icen=df$icen, 
-                     y_pred=pred, 
-                     y_true=df[[outcome_col]],
-                     outcome=outcome_col,
-                     test_set=df$test_set)
-  pred_logistic_mult <- rbind(pred_logistic_mult, pred)
-  
-}
-
-## Save
-write.csv(coef_logistic_mult, file.path(out_path, 'logistic-coef-mult.csv'), row.names=FALSE)
-
-mult70 = coef_logistic_mult[coef_logistic_mult$outcome == 'nonret2_days70',]
-write.csv(mult70, file.path(out_path, 'logistic-coef-mult-70.csv'), row.names=FALSE)
-write.csv(pred_logistic_mult, file.path(out_path, 'logistic-pred-mult.csv'), row.names=FALSE)
-
-
-# ---- 7. KM curves and conditional probability curves without train-test split ----
-
-# Data for first FIT requests with 70-day fu (recreating as df changed in section 6.)
+# Data for first FIT requests with 70-day fu (this is redundant, but not a bug)
 df <- df_full[df_full$fit_request_date_fu >= 70,]
 
 # Result containers
@@ -795,12 +423,6 @@ for(out_col in c('days_to_return', 'days_to_return_type1')){
   df_perc$return_type <- return_type
   df_perc$perc <- round(df_perc$perc, 2)
   return_time <- rbind(return_time, df_perc)
-  
-  test <- sum(t > 180)
-  print(test)
-  if(test < 10){
-    break
-  }
   
   # KM curve
   # Note: the conditional probabilities seem intuitively too high when using max time period as reference
@@ -915,12 +537,6 @@ for(out_col in c('days_to_return', 'days_to_return_type1')){
   df_perc$perc <- round(df_perc$perc, 2)
   return_time <- rbind(return_time, df_perc)
   
-  test <- sum(t > 180)
-  print(test)
-  if(test < 10){
-    break
-  }
-  
   # KM curve
   # Note: the conditional probabilities seem intuitively too high when using max time period as reference
   f <- paste('Surv(df_full$', out_col, ', df_full$', return_col, ') ~ 1', sep='')
@@ -988,3 +604,118 @@ for(out_col in c('days_to_return', 'days_to_return_type1')){
 
 write.csv(return_time, file.path(out_path, 'return_time_data-full_fu-70_years-23-24.csv'), row.names=FALSE)
 write.csv(km_curve, file.path(out_path, 'km_curve_data-full_years-23-24.csv'), row.names=FALSE)
+
+
+# ---- 6. Logistic models on full data (all requests) ----
+
+# Read data
+df <- read_csv("Z:/fit_nonreturn_paper_20250417/data/fit_nonret_fixed.csv")
+nrow(df)
+
+# IMD to factor
+df$imd_quintile_factor <- df$imd_quintile
+df$imd_quintile_factor[is.na(df$imd_quintile)] <- 'Not known'
+df$imd_quintile_factor <- factor(df$imd_quintile_factor)
+df$imd_quintile_factor <- relevel(df$imd_quintile_factor, ref='5')
+
+# Set White as reference
+df$ethnicity <- factor(df$ethnicity)
+df$ethnicity <- relevel(df$ethnicity, ref='White')
+
+# Set youngest age group as ref
+df$age_group <- factor(df$age_group)
+df$age_group <- relevel(df$age_group, ref='18-39')
+
+# Time to factor
+df$request_year_factor <- factor(df$request_year)
+df$request_year_factor <- relevel(df$request_year_factor, ref='2017')
+df$request_month_factor <- factor(df$request_month)
+df$request_month_factor <- relevel(df$request_month_factor, ref='1')
+
+# Use time with daily precision (more precision not needed)
+df$days_to_return <- round(df$days_to_return, digits=0)
+df$days_to_return_type1 <- round(df$days_to_return_type1, digits=0)
+
+# Drop patients without 70-day follow-up
+nrow(df)
+df <- df[df$fit_request_date_fu >= 70,]
+nrow(df)
+sum(is.na(df$nonret2_days70))
+sum(is.na(df$nonret2_days14))
+
+# Train test split
+df_train <- df[df$test_set == 0,]
+df_test <- df[df$test_set == 1,]
+df_train <- df_train[,colnames(df_train) != 'test_set']
+
+# Dbl check that the few >365 returns are dropped
+max(df[df$fit_return_type1 == 1,]$days_to_return_type1)
+
+# Fit models
+coef_logistic_mult <- data.frame()
+pred_logistic_mult <- data.frame()
+
+for(outcome_col in c('nonret2_days7', 'nonret2_days14', 'nonret2_days28', 'nonret2_days70',
+                     'nonret1_days7', 'nonret1_days14', 'nonret1_days28', 'nonret1_days70')){
+  print(outcome_col)
+  
+  # Fit simplest logistic model
+  formula = paste(outcome_col, "~ gender_male + age_group + ethnicity + imd_quintile_factor + request_year_factor + request_month_factor")
+  fit_logistic <- glm(as.formula(formula), data=df_train, family = binomial(link="logit"))
+  summary(fit_logistic)
+  
+  # Reformat the model summary
+  # Reformat the model summary
+  tab <- data.frame(coef(summary(fit_logistic)), check.names = FALSE)
+  tab$variable <- rownames(tab)
+  rownames(tab) <- NULL
+  
+  est <- tab$Estimate
+  se  <- tab$`Std. Error`
+  pval <- tab$`Pr(>|z|)`
+  
+  or     <- round(exp(est), 2)
+  or_low <- round(exp(est - 1.96 * se), 2)
+  or_upp <- round(exp(est + 1.96 * se), 2)
+  or_ci  <- paste0("(", 
+                   format(or_low, nsmall=2, scientific=FALSE, trim=TRUE), 
+                   ", ", 
+                   format(or_upp, nsmall=2, scientific=FALSE, trim=TRUE), 
+                   ")", 
+                   sep="")
+  
+  # p value: round to 3 dp, floor small values to <0.001
+  or_pval <- round(pval, 3)
+  or_pval <- format(or_pval, nsmall = 3, scientific = FALSE, trim = TRUE)
+  or_pval[pval < 0.001] <- "<0.001"
+  
+  tab_logistic <- data.frame(variable = tab$variable,
+                             or = format(or, nsmall=2, scientific=FALSE, trim=TRUE),
+                             or_ci = or_ci,
+                             or_pval = or_pval,
+                             outcome = outcome_col,
+                             stringsAsFactors = FALSE)
+  
+  coef_logistic_mult <- rbind(coef_logistic_mult, tab_logistic)
+  
+  # Create predictions on the held out test set
+  # What to do with year 2024 not in factor level?
+  df_new <- df
+  df_new$request_year_factor[df_new$request_year_factor == 2024] <- 2023
+  pred <- predict(fit_logistic, newdata=df_new, type='response')
+  pred <- data.frame(patient_id=df$patient_id, 
+                     icen=df$icen, 
+                     y_pred=pred, 
+                     y_true=df[[outcome_col]],
+                     outcome=outcome_col,
+                     test_set=df$test_set)
+  pred_logistic_mult <- rbind(pred_logistic_mult, pred)
+  
+}
+
+## Save
+write.csv(coef_logistic_mult, file.path(out_path, 'logistic-coef-mult.csv'), row.names=FALSE)
+
+mult70 = coef_logistic_mult[coef_logistic_mult$outcome == 'nonret2_days70',]
+write.csv(mult70, file.path(out_path, 'logistic-coef-mult-70.csv'), row.names=FALSE)
+write.csv(pred_logistic_mult, file.path(out_path, 'logistic-pred-mult.csv'), row.names=FALSE)

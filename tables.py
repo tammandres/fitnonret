@@ -103,7 +103,10 @@ df_all = pd.read_csv(data_path / 'fit_nonret_fixed.csv')
 
 # Subset to 70 day follow-up
 test = df.nonret1_days70.isna() == df.nonret2_days70.isna()
-test.all()
+assert test.all()
+
+test = df_all.nonret1_days70.isna() == df_all.nonret2_days70.isna()
+assert test.all()
 
 print(df.shape, df_all.shape)
 df = df.loc[~df.nonret1_days70.isna()]
@@ -152,15 +155,14 @@ desc = pd.DataFrame()
 
 for i, o in enumerate(outcomes):
     print(o)
-    days = int(re.findall('days(\d+)', o)[0])
-    test = (df.censored == 1) & (df.days_to_death <= days)
+    days = int(re.findall(r'days(\d+)', o)[0])
 
     df0 = df.loc[df[o] == 0]
     df1 = df.loc[df[o] == 1]
 
-    assert df0.shape[0] + df1.shape[0] == npat
-    df_all0 = df_all.loc[df_all[o] == 0]
-    df_all1 = df_all.loc[df_all[o] == 1]
+    assert df0.shape[0] + df1.shape[0] == npat  # if someone had 70-day fu, they also had 28 and 14 day fu, hence okay to use common npat
+    df_all0 = df_all[df_all.patient_id.isin(df0.patient_id)]
+    df_all1 = df_all[df_all.patient_id.isin(df1.patient_id)]
 
     desc0 = describe(df0, df_all0)
     desc1 = describe(df1, df_all1)
@@ -171,8 +173,8 @@ for i, o in enumerate(outcomes):
     desc0['nonret'] = 0
     desc1['nonret'] = 1
 
-    days = re.findall('days(\d+)', o)[0]
-    return_type = re.findall('nonret(\d+)', o)[0]
+    days = re.findall(r'days(\d+)', o)[0]
+    return_type = re.findall(r'nonret(\d+)', o)[0]
 
     desc01 = pd.concat(objs=[desc0, desc1], axis=0)
     desc01['return_type'] = return_type
@@ -199,7 +201,7 @@ for c in cols:
     s[c] = s[c].round(3)*100
 print(s)
 s['type'] = 'km'
-
+s.to_csv(out_path / 'return_probabilities_km.csv', index=False)
 #endregion
 
 

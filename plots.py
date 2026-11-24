@@ -12,11 +12,11 @@ in_path = out_path
 hide_small_km_counts = True
 
 # Helper functions
-def summarise_performance(y_true, y_pred, mod_name):
+def summarise_performance(y_true, y_pred, mod_name, outcome):
     
     ap = average_precision_score(y_true, y_pred)
     auc = roc_auc_score(y_true, y_pred) 
-    m = pd.DataFrame({'outcome': o, 'ap': ap, 'auc': auc}, index=[0])
+    m = pd.DataFrame({'outcome': outcome, 'ap': ap, 'auc': auc}, index=[0])
 
     precision, recall, thr = precision_recall_curve(y_true, y_pred)
     thr = np.concatenate([thr, [np.nan]])
@@ -24,7 +24,7 @@ def summarise_performance(y_true, y_pred, mod_name):
     pr['pos'] = pr.apply(lambda x: (y_pred >= x['thr']).sum(), axis=1)
     pr['ppos'] = pr.pos / len(y_pred) * 100
     pr['ppos_perf'] = pr.recall * y_true.mean() * 100
-    pr['outcome'] = o
+    pr['outcome'] = outcome
 
     fig, ax = plt.subplots(1, 2, figsize=(9, 5), tight_layout=True)
     ax = ax.flatten()
@@ -150,7 +150,7 @@ for o in outcome:
     #dfsub = dfsub.loc[dfsub.age_group == '18-39']
 
     y_true, y_pred = dfsub.y_true, dfsub.y_pred
-    m, pr, fig = summarise_performance(y_true, y_pred, 'Logistic regression')
+    m, pr, fig = summarise_performance(y_true, y_pred, 'Logistic regression', o)
     plt.savefig(out_path / ('logistic_pred_' + str(o) + '.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -178,7 +178,7 @@ for o in outcome:
     #dfsub = dfsub.loc[dfsub.age_group == '18-39']
 
     y_true, y_pred = dfsub.y_true, dfsub.y_pred
-    m, pr, fig = summarise_performance(y_true, y_pred, 'Logistic regression')
+    m, pr, fig = summarise_performance(y_true, y_pred, 'Logistic regression', o)
     plt.savefig(out_path / ('logistic_pred_mult_' + str(o) + '.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -209,7 +209,7 @@ for o in outcome:
     #dfsub = dfsub.loc[dfsub.age_group == '18-39']
 
     y_true, y_pred = dfsub.y_true, dfsub.y_pred
-    m, pr, fig = summarise_performance(y_true, y_pred, 'GAM')
+    m, pr, fig = summarise_performance(y_true, y_pred, 'GAM', o)
     plt.savefig(out_path / ('gam_pred_' + str(o) + '.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
